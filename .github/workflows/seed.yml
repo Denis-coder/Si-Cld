@@ -1,0 +1,14 @@
+name: seed (ОПАСНО: пересоздаёт data/db.json из source/original.xlsx)
+on: workflow_dispatch
+permissions: {contents: write}
+jobs:
+  seed:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with: {python-version: '3.12'}
+      - run: pip install openpyxl && python scripts/seed.py
+      - run: |
+          git config user.name "si-bot"; git config user.email "si-bot@users.noreply.github.com"
+          git add data/db.json; git diff --cached --quiet || (git commit -m "seed" && git pull --rebase && git push)
