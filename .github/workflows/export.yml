@@ -1,0 +1,18 @@
+name: export-xlsx
+on:
+  push:
+    paths: ['data/db.json','source/original.xlsx']
+permissions: {contents: write}
+concurrency: {group: export, cancel-in-progress: false}
+jobs:
+  export:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with: {python-version: '3.12'}
+      - run: pip install openpyxl && python scripts/export_xlsx.py
+      - run: |
+          git config user.name "si-bot"; git config user.email "si-bot@users.noreply.github.com"
+          git add Perechen_SI.xlsx
+          git diff --cached --quiet || (git commit -m "Excel обновлён" && git pull --rebase && git push)
