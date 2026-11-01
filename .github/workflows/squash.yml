@@ -1,0 +1,16 @@
+name: squash-history
+on:
+  schedule: [{cron: '0 3 1 * *'}]   # 1-го числа каждого месяца, 03:00 UTC
+  workflow_dispatch:
+permissions: {contents: write}
+jobs:
+  squash:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with: {fetch-depth: 0, token: '${{ secrets.SQUASH_TOKEN || github.token }}'}
+      - run: |
+          git config user.name si-bot; git config user.email si-bot@users.noreply.github.com
+          B=${{ github.ref_name }}; SHA=$(git rev-parse HEAD)
+          git checkout -q --orphan squashed && git add -A && git commit -qm "Снимок $(date +%F)"
+          git push --force-with-lease=$B:$SHA origin squashed:$B   # если за это время кто-то сохранил правку — не затираем

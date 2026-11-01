@@ -1,0 +1,12 @@
+name: migrate (один раз: старый формат данных -> новый)
+on: workflow_dispatch
+permissions: {contents: write}
+jobs:
+  migrate:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - run: python scripts/migrate.py
+      - run: |
+          git config user.name si-bot; git config user.email si-bot@users.noreply.github.com
+          git add -A data; git diff --cached --quiet || (git commit -m "migrate" && git pull --rebase && git push)

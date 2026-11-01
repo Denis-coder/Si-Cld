@@ -1,0 +1,19 @@
+name: export-xlsx
+on:
+  push: {paths: ['data/s/**','source/original.xlsx']}
+  workflow_dispatch:
+permissions: {contents: write}
+concurrency: {group: export, cancel-in-progress: true}   # серия правок -> собирается только последняя
+jobs:
+  export:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - run: sleep 90     # ждём, пока бригада закончит серию правок
+      - uses: actions/setup-python@v5
+        with: {python-version: '3.12'}
+      - run: pip install openpyxl && mkdir /tmp/out && python scripts/export_xlsx.py /tmp/out/Perechen_SI.xlsx
+      - run: |   # файл живёт в отдельной ветке excel, каждый раз ОДНИМ новым коммитом (история не копится)
+          cd /tmp/out && git init -q -b excel && git config user.name si-bot && git config user.email si-bot@users.noreply.github.com
+          git add Perechen_SI.xlsx && git commit -qm "Excel" 
+          git push -f https://x-access-token:${{ github.token }}@github.com/${{ github.repository }}.git excel

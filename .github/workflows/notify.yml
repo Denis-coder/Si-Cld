@@ -1,0 +1,18 @@
+name: notify
+on:
+  schedule: [{cron: '0 4 * * *'}]   # каждый день 04:00 UTC
+  workflow_dispatch:
+permissions: {contents: write}
+jobs:
+  notify:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with: {python-version: '3.12'}
+      - run: pip install pywebpush && python scripts/notify.py
+        env: {VAPID_PRIVATE: '${{ secrets.VAPID_PRIVATE }}'}
+      - run: |
+          git config user.name "si-bot"; git config user.email "si-bot@users.noreply.github.com"
+          git add data/subs.json
+          git diff --cached --quiet || (git commit -m "subs" && git pull --rebase && git push)
