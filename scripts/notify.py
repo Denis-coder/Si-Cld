@@ -2,11 +2,11 @@
 import json,os,sys
 sys.path.insert(0,os.path.dirname(__file__)); from common import *
 from pywebpush import webpush,WebPushException
-rows=[r for v in load_db().values() for r in v]
+IDX=load_index(); rows=[r for k,v in load_db().items() if not IDX[k].get('reserve') for r in v]   # резерв не считаем
 red=sum(status(r)=='red' for r in rows); yel=sum(status(r)=='yel' for r in rows)
 subs=json.load(open('data/subs.json')); keep=[]
 if red+yel:
-    msg=json.dumps({'title':'Учёт СИ','body':f'Просрочено: {red}. Скоро истекает (<3 мес.): {yel}.'})
+    msg=json.dumps({'title':'Учёт СИ','body':f'Просрочено: {red}. Скоро истекает (<3 мес.): {yel}.','badge':red})
     for sub in subs.get('subs',[]):
         try: webpush({k:sub[k] for k in('endpoint','keys')},msg,vapid_private_key=os.environ['VAPID_PRIVATE'],vapid_claims={'sub':'mailto:admin@example.com'}); keep.append(sub)
         except WebPushException as e:

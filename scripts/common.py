@@ -13,9 +13,7 @@ def eom(y,m):  # конец месяца m (1-based, может выходить
 def due(r):
     raw=re.sub(r'[\\\s]','',r.get('date') or '')
     if not raw: return None
-    try: iv=int(r.get('interval') or 0)
-    except ValueError: iv=0
-    if iv<=0: iv=12 if group(r)=='m' else 24
+    iv=12 if group(r)=='m' else 24   # правило по типу: манометры/термоманометры/манометрические термометры — 12 мес., биметаллические — 24
     m=re.match(r'^([1-4])[кk](\d{2})$',raw,re.I)
     if m: return eom(2000+int(m[2]),int(m[1])*3+iv)
     m=re.match(r'^(\d{2})ДЯУ$',raw,re.I)
@@ -37,7 +35,11 @@ import json,os
 def load_db():
     idx=json.load(open('data/index.json',encoding='utf-8'))['sheets']
     return {m['name']:json.load(open('data/s/'+m['file'],encoding='utf-8'))['rows'] for m in idx}
-def save_db(sheets):
-    os.makedirs('data/s',exist_ok=True)
-    json.dump({'sheets':[{'name':n,'file':f'{i}.json'} for i,n in enumerate(sheets)]},open('data/index.json','w',encoding='utf-8'),ensure_ascii=False,separators=(',',':'))
-    for i,rows in enumerate(sheets.values()): json.dump({'rows':rows},open(f'data/s/{i}.json','w',encoding='utf-8'),ensure_ascii=False,separators=(',',':'))
+RKEYS=['name','type','sn','year','range','cls','thread','interval','date','orient']   # листы «Резерв»
+def load_index(): return {m['name']:m for m in json.load(open('data/index.json',encoding='utf-8'))['sheets']}
+def save_db(sheets,meta=None):
+    meta=meta or {}; os.makedirs('data/s',exist_ok=True); idx=[]
+    for i,(n,rows) in enumerate(sheets.items()):
+        idx.append({'name':n,'file':f'{i}.json',**meta.get(n,{})})
+        json.dump({'rows':rows},open(f'data/s/{i}.json','w',encoding='utf-8'),ensure_ascii=False,separators=(',',':'))
+    json.dump({'sheets':idx},open('data/index.json','w',encoding='utf-8'),ensure_ascii=False,separators=(',',':'))
