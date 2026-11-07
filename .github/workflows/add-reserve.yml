@@ -1,0 +1,14 @@
+name: add-reserve (добавить листы «Резерв» из оригинала, правки не трогает)
+on: workflow_dispatch
+permissions: {contents: write}
+jobs:
+  add:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with: {python-version: '3.12'}
+      - run: pip install openpyxl && python scripts/seed.py --add-missing
+      - run: |
+          git config user.name si-bot; git config user.email si-bot@users.noreply.github.com
+          git add -A data; git diff --cached --quiet || (git commit -m "reserve" && git pull --rebase && git push)
