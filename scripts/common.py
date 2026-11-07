@@ -1,4 +1,4 @@
-import re,datetime,calendar
+import re,datetime,calendar,json,os
 KEYS=['name','type','sn','year','range','cls','place','object','dept','inst','interval','date','kind']
 RX=re.compile(r'манометр|термометр\s+биметалл|термоманометр',re.I)
 def s(v):
@@ -10,10 +10,30 @@ def group(r): return 'm' if re.search(r'термоманометр|маноме�
 def eom(y,m):  # конец месяца m (1-based, может выходить за 12)
     y+= (m-1)//12; m=(m-1)%12+1
     return datetime.date(y,m,calendar.monthrange(y,m)[1])
-def due(r):
+def kind_of(r):
+    k=(r.get('kind') or '').strip().lower()[:1]
+    return 'К' if k in ('к','k') else 'П' if k in ('п','p') else ''
+_mode=[None]
+def load_mode():
+    if _mode[0] is None:
+        try: _mode[0]=json.load(open('data/config.json',encoding='utf-8')).get('intervalMode','rules')
+        except Exception: _mode[0]='rules'
+    return _mode[0]
+def interval(r,mode=None):
+    # mode 'table': межповерочный интервал из столбца таблицы (если пусто — как по правилам)
+    # mode 'rules': П (госповерка) — 12 мес. для всех; К (калибровка): манометры и термоманометры 12, термометры 24
+    mode=mode or load_mode()
+    if mode=='table':
+        try:
+            t=int(r.get('interval') or 0)
+            if t>0: return t
+        except ValueError: pass
+    if kind_of(r)=='П': return 12
+    return 24 if re.search(r'термометр',r.get('name',''),re.I) else 12
+def due(r,mode=None):
     raw=re.sub(r'[\\\s]','',r.get('date') or '')
     if not raw: return None
-    iv=12 if group(r)=='m' else 24   # правило по типу: манометры/термоманометры/манометрические термометры — 12 мес., биметаллические — 24
+    iv=interval(r,mode)
     m=re.match(r'^([1-4])[кk](\d{2})$',raw,re.I)
     if m: return eom(2000+int(m[2]),int(m[1])*3+iv)
     m=re.match(r'^(\d{2})ДЯУ$',raw,re.I)
@@ -25,8 +45,8 @@ def due(r):
     m=re.match(r'^(\d{1,2})\.(\d{4})$',raw)
     if m: return eom(int(m[2]),int(m[1])+iv)
     return None
-def status(r,today=None):
-    d=due(r); today=today or datetime.date.today()
+def status(r,today=None,mode=None):
+    d=due(r,mode); today=today or datetime.date.today()
     if not d: return ''
     days=(d-today).days
     return 'red' if days<0 else 'yel' if days<=92 else 'grn'
