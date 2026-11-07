@@ -6,9 +6,14 @@ const S={sheets:{},me:null,cur:'*',q:'',open:null,lim:40};
 const norm=s=>String(s||'').toLowerCase().replace(/[\s\-_.\/\\]/g,'');
 const group=r=>/термоманометр|манометр/i.test(r.name)?'Манометры':'Термометры';
 /* ---------- срок поверки ---------- */
+/* срок: режим «rules» — П (госповерка) 12 мес. для всех; К (калибровка): манометры и термоманометры 12, термометры 24.
+   режим «table» — «Межповерочный интервал» из таблицы (если пусто — как по правилам). Переключатель: Ещё → «Как считать срок» */
+const kindOf=r=>{const k=String(r.kind||'').trim().toLowerCase()[0];return k==='к'||k==='k'?'К':k==='п'||k==='p'?'П':''};
+function ivOf(r){if(S.cfg&&S.cfg.intervalMode==='table'){const t=parseInt(r.interval);if(t>0)return t}
+  if(kindOf(r)==='П')return 12;return /термометр/i.test(r.name)?24:12}
 function due(r){ // → {date:Date|null,text}
   const raw=String(r.date||'').replace(/[\\\s]/g,''); if(!raw)return null;
-  const iv=group(r)==='Манометры'?12:24; // правило по типу: манометры/термоманометры — 12 мес., биметаллические термометры — 24
+  const iv=ivOf(r);
   let m,end;
   if(m=raw.match(/^([1-4])[кk](\d{2})$/i)){const y=2000+ +m[2],q=+m[1]; end=new Date(y,q*3,0); end.setMonth(end.getMonth()+iv+0); end=new Date(end.getFullYear(),end.getMonth()+1,0);} // конец квартала
   else if(m=raw.match(/^(\d{2})ДЯУ$/i)){end=new Date(2000+ +m[1]+iv/12,11,31)}                     // клеймо: до конца года
@@ -48,7 +53,7 @@ const hfile=async(rd,hs)=>{const p='data/history/'+new Date().toISOString().slic
 const hist=hs=>txn(async rd=>{const[p,a]=await hfile(rd,hs);return{[p]:a}},'history');
 /* ---------- загрузка таблицы: файл на лист, кэш по sha ---------- */
 async function loadAll(){
-  const[idx,dir]=await Promise.all([rd('data/index.json'),g('/contents/data/s?t='+Date.now())]);
+  const[idx,dir,cf]=await Promise.all([rd('data/index.json'),g('/contents/data/s?t='+Date.now()),rd('data/config.json')]);S.cfg=cf.json||{};
   if(!idx.json)throw new Error('Данные не найдены. Запустите в репозитории Actions → seed (новая установка) или migrate (старый формат).');
   S.index=idx.json.sheets;localStorage.si_idx=JSON.stringify(S.index);const shaOf=Object.fromEntries(dir.map(f=>[f.name,f.sha])),out={};
   await Promise.all(S.index.map(async m=>{const k='si_c_'+m.file;let c=null;try{c=JSON.parse(localStorage[k]||'null')}catch{}
@@ -157,12 +162,16 @@ function card(sh,r){const s=status(r),c=s.c,o=S.open===sh+'|'+r.id,res=isRes(sh)
   const place=res?`Резерв${r.thread?' · резьба '+esc(r.thread):''}${r.orient?' · штуцер '+esc(r.orient):''}`:`${esc(r.place||'место не указано')}${r.object?' · '+esc(r.object):''}`;
   return `<div class="card ${c}"><div class="ch" data-o="${esc(sh+'|'+r.id)}"><div class="c1"><div><div class="nm">${esc(r.name)}</div><div class="ty">${esc(r.type)}</div></div><span class="pill">${pillText(r,c)}</span></div>
   <span class="sn">№ ${esc(r.sn||'б/н')}</span><div class="pl">📍 ${place}</div><div class="mt"><span class="tag">${esc(sh)}</span>${esc(r.range)}</div>
-  <div class="du ${c||'no'}">${r.date?esc(r.date)+(r.kind?' · '+esc(r.kind):'')+(s.d?' · '+dueText(r):''):'Дата поверки не указана'}</div></div>
+  <div class="du ${c||'no'}">${r.date?esc(r.date)+(r.kind?' · '+esc(r.kind):'')+(s.d?' · '+dueText(r)+' · '+ivOf(r)+' мес.':''):'Дата поверки не указана'}</div></div>
   ${o?`<div class="fm">${fieldsOf(sh).map(([k,l])=>`<div><label>${l}</label><input data-f="${k}" value="${esc(r[k])}"></div>`).join('')}</div>
   <div class="acts"><button data-a="save" data-sh="${esc(sh)}" data-id="${r.id}">💾 Сохранить</button><button class="g" data-a="qr" data-sh="${esc(sh)}" data-id="${r.id}">QR</button>${res?`<button class="g" data-a="place" data-sh="${esc(sh)}" data-id="${r.id}">➜ Поставить на место</button>`:`<button class="g" data-a="swap" data-sh="${esc(sh)}" data-id="${r.id}">⇄ Поменять</button>`}<button class="r" data-a="del" data-sh="${esc(sh)}" data-id="${r.id}">Удалить</button></div>`:''}</div>`}
-function moreDlg(){const m=modal(`<h3>Ещё</h3><div class="mlist"><button class="g" data-x="xl">⬇ Скачать актуальный Excel</button><button class="g" data-x="pr">🖨 Печать QR (текущий выбор листов)</button><button class="g" data-x="nt">🔔 Push-уведомления</button>${S.me.admin?'<button class="g" data-x="us">👥 Люди и доступ</button><button class="g" data-x="im">⬆ Загрузить новую таблицу Excel</button>':''}<button class="r" data-x="lo">Выйти</button></div><div class="sub center">${esc(S.me.name||S.me.login)}${S.me.admin?' · администратор':''}</div>`);
+function moreDlg(){const m=modal(`<h3>Ещё</h3><div class="sub">Как считать срок поверки / калибровки</div><div class="row" style="margin-top:4px"><button class="${(S.cfg&&S.cfg.intervalMode)==='table'?'g':''}" data-md="rules" ${S.me.admin?'':'disabled'}>По правилам</button><button class="${(S.cfg&&S.cfg.intervalMode)==='table'?'':'g'}" data-md="table" ${S.me.admin?'':'disabled'}>По столбцу таблицы</button></div>
+  <div class="sub" style="margin-bottom:8px">${(S.cfg&&S.cfg.intervalMode)==='table'?'Сейчас: интервал берётся из столбца «Межповерочный интервал».':'Сейчас: «П» (госповерка) — 12 мес. для всех; «К» (калибровка) — манометры и термоманометры 12 мес., термометры 24 мес.'}${S.me.admin?'':' Менять может администратор.'}</div>
+  <div class="mlist"><button class="g" data-x="xl">⬇ Скачать актуальный Excel</button><button class="g" data-x="pr">🖨 Печать QR (текущий выбор листов)</button><button class="g" data-x="nt">🔔 Push-уведомления</button>${S.me.admin?'<button class="g" data-x="us">👥 Люди и доступ</button><button class="g" data-x="im">⬆ Загрузить новую таблицу Excel</button>':''}<button class="r" data-x="lo">Выйти</button></div><div class="sub center">${esc(S.me.name||S.me.login)}${S.me.admin?' · администратор':''}</div>`);
   const f={xl:exportXlsx,pr:printQR,nt:askNotify,us:users,im:importXlsx,lo:()=>{localStorage.removeItem('si_s');S.me=null;login()}};
-  m.querySelectorAll('[data-x]').forEach(b=>b.onclick=()=>{m.remove();f[b.dataset.x]()})}
+  m.querySelectorAll('[data-x]').forEach(b=>b.onclick=()=>{m.remove();f[b.dataset.x]()});
+  m.querySelectorAll('[data-md]').forEach(b=>b.onclick=async()=>{const md=b.dataset.md;if((S.cfg&&S.cfg.intervalMode||'rules')===md)return;
+    try{await upd('data/config.json',c=>({...(c||{}),intervalMode:md}),'config');await hist([{action:'setup',sheet:'',text:'Режим расчёта сроков: '+(md==='table'?'по столбцу таблицы':'по правилам')}]);S.cfg={...(S.cfg||{}),intervalMode:md};m.remove();draw()}catch(e){alert(e.message)}})}
 async function act(a,sh,id){const r=S.sheets[sh].find(x=>x.id===id);
   try{
   if(a==='save'){const row={};document.querySelectorAll('.card [data-f]').forEach(i=>row[i.dataset.f]=i.value.trim());await ops([mk(sh,id,row)])}
