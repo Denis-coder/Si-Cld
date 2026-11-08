@@ -1,3 +1,4 @@
+/* Учёт СИ · версия 4.0 */
 'use strict';
 const F=[['name','Наименование'],['type','Тип'],['sn','Заводской номер'],['year','Год выпуска'],['range','Диапазон измерений'],['cls','Класс точности'],['place','Место установки СИ'],['object','Объект установки'],['dept','Подразделение'],['inst','Дата установки'],['interval','Межповерочный интервал, мес.'],['date','Дата последней поверки / калибровки'],['kind','Поверка (П) / Калибровка (К)']];
 const $=s=>document.querySelector(s),app=$('#app');
@@ -120,7 +121,9 @@ async function start(){try{await loadAll();draw();if(S.me.admin&&!(await rd('dat
     if(c&&c.every(m=>localStorage['si_c_'+m.file])&&!S.sheets.length){S.index=c;S.sheets=Object.fromEntries(c.map(m=>[m.name,JSON.parse(localStorage['si_c_'+m.file]).rows]));draw();alert('Нет связи с GitHub — показаны данные, сохранённые на телефоне. Изменить таблицу сейчас нельзя.')}else alert(e.message)}}
 document.addEventListener('visibilitychange',async()=>{if(document.visibilityState==='visible'&&S.me&&!S.open&&!document.querySelector('.modal')&&Date.now()-(S.lt||0)>20000){try{await loadAll();draw()}catch{}}});
 /* ---------- основной экран ---------- */
+const VER='4.0';
 const WORK=()=>Object.keys(S.sheets).filter(n=>!isRes(n)),RESV=()=>Object.keys(S.sheets).filter(isRes);
+const inRes=()=>S.cur==='#res'||(S.cur!=='*'&&isRes(S.cur));
 const items=()=>Object.entries(S.sheets).flatMap(([sh,rows])=>(S.cur==='*'?!isRes(sh):S.cur==='#res'?isRes(sh):S.cur===sh)?rows.map(r=>({sh,r})):[]);
 const KW=r=>/^[кk]/i.test(r.kind||'')?'Калибровка':/^п/i.test(r.kind||'')?'Поверка':'Срок';
 const pillText=(r,c)=>{const k=KW(r),s=k==='Срок';return c==='red'?(s?'Срок истёк':k+' просрочена'):c==='yel'?(s?'Скоро истекает':k+' истекает'):c==='grn'?(s?'Годен':k+' действует'):'Нет даты'};
@@ -129,49 +132,60 @@ function dueText(r){const d=due(r);if(!d)return'';const raw=String(r.date||'').r
 const RK={red:0,yel:1,grn:2,'':3};
 function setBadge(){const n=Object.entries(S.sheets).reduce((a,[sh,rows])=>a+(isRes(sh)?0:rows.filter(r=>status(r).c==='red').length),0);
   try{if(n){navigator.setAppBadge&&navigator.setAppBadge(n)}else{navigator.clearAppBadge&&navigator.clearAppBadge()}}catch{}}
-function draw(){setBadge();
+async function setMode(md){if(!S.me.admin||(S.cfg&&S.cfg.intervalMode||'rules')===md)return;
+  try{await upd('data/config.json',c=>({...(c||{}),intervalMode:md}),'config');await hist([{action:'setup',sheet:'',text:'Режим расчёта сроков: '+(md==='table'?'по столбцу таблицы':'по правилам')}]);S.cfg={...(S.cfg||{}),intervalMode:md};draw()}catch(e){alert(e.message)}}
+function logout(){localStorage.removeItem('si_s');S.me=null;login()}
+async function hardUpdate(){try{(await navigator.serviceWorker.getRegistrations()).forEach(r=>r.unregister());(await caches.keys()).forEach(k=>caches.delete(k))}catch{}location.reload()}
+function draw(){
+  setBadge();const res=inRes(),mode=(S.cfg&&S.cfg.intervalMode)==='table'?'table':'rules';
   const all=items().map(x=>({...x,s:status(x.r)})),n={red:0,yel:0,grn:0,'':0},by={red:{},yel:{}};
   all.forEach(({r,s})=>{n[s.c]++;if(by[s.c]){const g=r.name.trim();by[s.c][g]=(by[s.c][g]||0)+1}});
-  const det=c=>{const e=Object.entries(by[c]).sort((a,b)=>b[1]-a[1]);return e.length?e.slice(0,3).map(([k,v])=>`${esc(k)}: <b>${v}</b>`).join('<br>')+(e.length>3?`<br>и ещё ${e.length-3} тип.`:''):'нет'};
+  const tchips=c=>Object.entries(by[c]).sort((a,b)=>b[1]-a[1]).map(([k,v])=>`<button class="tc ${S.tp===k&&S.flt===c?'on':''}" data-t="${c}" data-tp="${esc(k)}">${esc(k)} <b>${v}</b></button>`).join('')||'<span class="sub">нет</span>';
+  const stat=(c,l)=>`<div class="stat ${c} ${S.flt===c&&!S.tp?'on':''}" data-t="${c}"><div class="sn2">${n[c]}</div><div class="sb"><div class="sl">${l}</div>${c==='grn'?'<div class="sub">срок действует более 3 месяцев</div>':`<div class="tcs">${tchips(c)}</div>`}</div></div>`;
   const tk=S.q.toLowerCase().split(/\s+/).filter(Boolean),fl=S.flt;
-  const list=all.filter(x=>(!fl||(fl==='none'?x.s.c==='':x.s.c===fl))&&tk.every(t=>(x.sh+' '+Object.values(x.r).join(' ')).toLowerCase().includes(t))).sort((a,b)=>(RK[a.s.c]-RK[b.s.c])||((due(a.r)||0)-(due(b.r)||0)));
-  let rb='';if(S.cur==='*'&&RESV().length){const q={red:0,yel:0,'':0};RESV().forEach(sh=>S.sheets[sh].forEach(r=>q[status(r).c]++));
-    rb=`<div class="bn" data-res="1"><i>📦</i><div><b>Резерв:</b> просрочено ${q.red} · скоро ${q.yel} · без даты ${q['']}<br><span class="sub">Нажмите, чтобы открыть резервные приборы</span></div></div>`}
-  const kp=(c,l)=>`<div class="kpi ${c} ${fl===c?'on':''}" data-t="${c}"><span>${l}</span><b class="n">${n[c]}</b>${c==='grn'?'<small>действует более 3 мес.</small>':`<small>${det(c)}</small>`}</div>`;
-  const chip=(f,l,v)=>`<button class="chip ${(fl||'')===f?'on':''}" data-t="${f}">${l}<em>${v}</em></button>`;
+  const list=all.filter(x=>(!fl||(fl==='none'?x.s.c==='':x.s.c===fl))&&(!S.tp||x.r.name.trim()===S.tp)&&tk.every(t=>(x.sh+' '+Object.values(x.r).join(' ')).toLowerCase().includes(t))).sort((a,b)=>(RK[a.s.c]-RK[b.s.c])||((due(a.r)||0)-(due(b.r)||0)));
   const scs=Object.keys(S.sheets).filter(sh=>S.cur==='*'?!isRes(sh):S.cur==='#res'?isRes(sh):S.cur===sh),oth=scs.reduce((a,sh)=>a+(metaOf(sh).other||0),0),hasOth=scs.some(sh=>metaOf(sh).other!==undefined);
+  let rb='';if(!res&&RESV().length){const q={red:0,yel:0,'':0};RESV().forEach(sh=>S.sheets[sh].forEach(r=>q[status(r).c]++));
+    rb=`<div class="stat res" data-go="res"><div class="sn2">${q.red}</div><div class="sb"><div class="sl">Резерв: срок истёк</div><div class="sub">скоро истекает: ${q.yel} · без даты: ${q['']}<br>Нажмите, чтобы открыть резерв</div></div></div>`}
+  const chip=(f,l,v)=>`<button class="chip ${(fl||'')===f?'on':''}" data-t="${f}">${l}<em>${v}</em></button>`;
   const scopeName=S.cur==='*'?'все рабочие листы':S.cur==='#res'?'весь резерв':S.cur;
-  app.innerHTML=`<header><img src="icon-192.png" alt=""><div><h1>Учёт СИ</h1><small>${esc(S.me.name||S.me.login)}${S.me.admin?' · администратор':''}</small></div></header>
-  <main><div class="tot"><span><b>${all.length}</b> манометров и термометров на учёте</span>${hasOth?`<span><b>${all.length+oth}</b> СИ всего (все типы)</span>`:''}</div><div class="kpis">${kp('red','Просрочено')}${kp('yel','Скоро')}${kp('grn','Годны')}</div>${rb}
-  <div class="srch"><input id="q" type="search" placeholder="Поиск: тип, номер, место…" value="${esc(S.q)}"></div>
-  <select id="sh"><option value="*">Все рабочие листы (без резерва)</option><optgroup label="Рабочие листы">${WORK().map(k=>`<option ${k===S.cur?'selected':''}>${esc(k)}</option>`).join('')}</optgroup><optgroup label="Резерв"><option value="#res" ${S.cur==='#res'?'selected':''}>Весь резерв</option>${RESV().map(k=>`<option ${k===S.cur?'selected':''}>${esc(k)}</option>`).join('')}</optgroup></select>
+  const dis=S.me.admin?'':'disabled';
+  app.innerHTML=`<main><div class="hd"><img src="icon-192.png" alt=""><h1>Учёт средств измерений</h1><small>${esc(S.me.name||S.me.login)}${S.me.admin?' · администратор':''} · v${VER}</small></div>
+  ${res?'':`<div class="acts2"><button class="big" data-x="scan">📷 Сканировать QR</button><button class="g" data-x="batch">📦 Установка пачкой</button><button class="g" data-x="pr">🖨 Печать QR</button><button class="g" data-x="xl">⬇ Скачать Excel</button>${S.me.admin?'<button class="g" data-x="im">⬆ Загрузить Excel</button>':'<button class="g" data-x="nt">🔔 Уведомления</button>'}</div>
+  <div class="set"><div class="sl">Как считать срок поверки / калибровки</div><div class="seg"><button class="${mode==='rules'?'on':''}" data-md="rules" ${dis}>По правилам</button><button class="${mode==='table'?'on':''}" data-md="table" ${dis}>По столбцу таблицы</button></div>
+  <div class="sub" style="margin-top:8px">${mode==='table'?'Берётся «Межповерочный интервал» из таблицы (если пуст — по правилам).':'«П» (госповерка) — 12 мес. для всех; «К» (калибровка) — манометры и термоманометры 12 мес., термометры 24 мес.'}${S.me.admin?'':' Менять может администратор.'}</div></div>`}
+  <div class="tot"><b>${all.length}</b> ${res?'в резерве':'манометров и термометров на учёте'}${hasOth&&!res?` · <b>${all.length+oth}</b> СИ всего (все типы)`:''}</div>
+  ${stat('red','Просрочено')}${stat('yel','Скоро (менее 3 месяцев)')}${stat('grn','Годны')}${rb}
+  <div class="srch"><input id="q" type="search" placeholder="Поиск по номеру, типу или месту" value="${esc(S.q)}"></div>
+  <select id="sh">${res?`<option value="#res">Весь резерв</option>${RESV().map(k=>`<option ${k===S.cur?'selected':''}>${esc(k)}</option>`).join('')}`:`<option value="*">Все рабочие листы</option>${WORK().map(k=>`<option ${k===S.cur?'selected':''}>${esc(k)}</option>`).join('')}`}</select>
   <div class="chips">${chip('','Все',all.length)}${chip('red','Просрочено',n.red)}${chip('yel','Скоро',n.yel)}${chip('grn','Годны',n.grn)}${chip('none','Без даты',n[''])}</div>
-  <div class="cnt">Показано ${Math.min(S.lim,list.length)} из ${list.length} · ${esc(scopeName)}${fl?'':' · сверху просроченные'}</div>
+  <div class="cnt">Показано ${Math.min(S.lim,list.length)} из ${list.length} · ${esc(scopeName)}${S.tp?` · тип: ${esc(S.tp)}<button class="g s" data-clr="1">✕</button>`:''}${fl||S.tp?'':' · сверху просроченные'}</div>
   <div id="ls">${list.slice(0,S.lim).map(({sh,r})=>card(sh,r)).join('')}${list.length>S.lim?`<button class="g" style="width:100%" id="more">Показать ещё ${Math.min(40,list.length-S.lim)}</button>`:''}${list.length?'':'<p class="center sub">Ничего не найдено</p>'}</div></main>
-  <nav class="bar"><button data-n="home"><span>🏠</span>Журнал</button><button data-n="hist"><span>🕘</span>История</button><button class="fab" data-n="scan" aria-label="Сканировать QR"><span>📷</span></button><button data-n="batch"><span>📦</span>Установка</button><button data-n="more"><span>⋯</span>Ещё</button></nav>`;
+  <nav class="bar"><button data-n="j" class="${res?'':'on'}"><span>📋</span>Журнал</button><button data-n="r" class="${res?'on':''}"><span>📦</span>Резерв</button><button class="fab" data-n="scan" aria-label="Сканировать QR"><span>📷</span></button><button data-n="hist"><span>🕘</span>История</button><button data-n="p"><span>👤</span>Люди</button></nav>`;
   $('#sh').onchange=e=>{S.cur=e.target.value;S.lim=40;draw()};
   $('#q').oninput=e=>{S.q=e.target.value;S.lim=40;clearTimeout(S.tm);S.tm=setTimeout(()=>{draw();const q=$('#q');q.focus();q.setSelectionRange(99,99)},250)};
-  document.querySelectorAll('[data-t]').forEach(e=>e.onclick=()=>{const t=e.dataset.t;S.flt=(S.flt===t||t==='')?'':t;S.lim=40;draw();if(t)$('#ls').scrollIntoView({behavior:'smooth'})});
-  const rs=document.querySelector('[data-res]');if(rs)rs.onclick=()=>{S.cur='#res';S.flt='';S.lim=40;draw();scrollTo(0,0)};
+  document.querySelectorAll('[data-t]').forEach(e=>e.onclick=ev=>{ev.stopPropagation();const t=e.dataset.t,tp=e.dataset.tp||'';
+    if(tp){const same=S.flt===t&&S.tp===tp;S.flt=same?'':t;S.tp=same?'':tp}else{S.flt=(S.flt===t&&!S.tp||t==='')?'':t;S.tp=''}
+    S.lim=40;draw();if(S.flt)$('#ls').scrollIntoView({behavior:'smooth'})});
+  const cl=document.querySelector('[data-clr]');if(cl)cl.onclick=()=>{S.tp='';S.flt='';draw()};
+  const rs=document.querySelector('[data-go]');if(rs)rs.onclick=()=>{S.cur='#res';S.flt='';S.tp='';S.lim=40;draw();scrollTo(0,0)};
   const mo=$('#more');if(mo)mo.onclick=()=>{S.lim+=40;draw()};
   document.querySelectorAll('[data-o]').forEach(e=>e.onclick=()=>{S.open=S.open===e.dataset.o?null:e.dataset.o;draw()});
   document.querySelectorAll('[data-a]').forEach(b=>b.onclick=ev=>{ev.stopPropagation();b.dataset.a==='place'?fromReserve(b.dataset.sh,b.dataset.id):act(b.dataset.a,b.dataset.sh,b.dataset.id)});
-  document.querySelectorAll('[data-n]').forEach(b=>b.onclick=()=>({home:()=>{S.q='';S.flt='';S.open=null;S.cur='*';S.lim=40;draw();scrollTo(0,0)},hist:history,scan:scanOne,batch,more:moreDlg}[b.dataset.n]()));
+  document.querySelectorAll('[data-md]').forEach(b=>b.onclick=()=>setMode(b.dataset.md));
+  document.querySelectorAll('.acts2 [data-x]').forEach(b=>b.onclick=()=>({scan:scanOne,batch,pr:printQR,xl:exportXlsx,im:importXlsx,nt:askNotify}[b.dataset.x]()));
+  document.querySelectorAll('[data-n]').forEach(b=>b.onclick=()=>({j:()=>{S.cur='*';S.q='';S.flt='';S.tp='';S.open=null;S.lim=40;draw();scrollTo(0,0)},r:()=>{S.cur='#res';S.q='';S.flt='';S.tp='';S.open=null;S.lim=40;draw();scrollTo(0,0)},hist:history,scan:scanOne,p:profileDlg}[b.dataset.n]()));
 }
 function card(sh,r){const s=status(r),c=s.c,o=S.open===sh+'|'+r.id,res=isRes(sh);
   const place=res?`Резерв${r.thread?' · резьба '+esc(r.thread):''}${r.orient?' · штуцер '+esc(r.orient):''}`:`${esc(r.place||'место не указано')}${r.object?' · '+esc(r.object):''}`;
   return `<div class="card ${c}"><div class="ch" data-o="${esc(sh+'|'+r.id)}"><div class="c1"><div><div class="nm">${esc(r.name)}</div><div class="ty">${esc(r.type)}</div></div><span class="pill">${pillText(r,c)}</span></div>
-  <span class="sn">№ ${esc(r.sn||'б/н')}</span><div class="pl">📍 ${place}</div><div class="mt"><span class="tag">${esc(sh)}</span>${esc(r.range)}</div>
+  <span class="sn">${esc(r.sn||'б/н')}</span><div class="pl">${place} · <span class="tag">${esc(sh)}</span></div><div class="pl">${esc(r.range)}</div>
   <div class="du ${c||'no'}">${r.date?esc(r.date)+(r.kind?' · '+esc(r.kind):'')+(s.d?' · '+dueText(r)+' · '+ivOf(r)+' мес.':''):'Дата поверки не указана'}</div></div>
   ${o?`<div class="fm">${fieldsOf(sh).map(([k,l])=>`<div><label>${l}</label><input data-f="${k}" value="${esc(r[k])}"></div>`).join('')}</div>
   <div class="acts"><button data-a="save" data-sh="${esc(sh)}" data-id="${r.id}">💾 Сохранить</button><button class="g" data-a="qr" data-sh="${esc(sh)}" data-id="${r.id}">QR</button>${res?`<button class="g" data-a="place" data-sh="${esc(sh)}" data-id="${r.id}">➜ Поставить на место</button>`:`<button class="g" data-a="swap" data-sh="${esc(sh)}" data-id="${r.id}">⇄ Поменять</button>`}<button class="r" data-a="del" data-sh="${esc(sh)}" data-id="${r.id}">Удалить</button></div>`:''}</div>`}
-function moreDlg(){const m=modal(`<h3>Ещё</h3><div class="sub">Как считать срок поверки / калибровки</div><div class="row" style="margin-top:4px"><button class="${(S.cfg&&S.cfg.intervalMode)==='table'?'g':''}" data-md="rules" ${S.me.admin?'':'disabled'}>По правилам</button><button class="${(S.cfg&&S.cfg.intervalMode)==='table'?'':'g'}" data-md="table" ${S.me.admin?'':'disabled'}>По столбцу таблицы</button></div>
-  <div class="sub" style="margin-bottom:8px">${(S.cfg&&S.cfg.intervalMode)==='table'?'Сейчас: интервал берётся из столбца «Межповерочный интервал».':'Сейчас: «П» (госповерка) — 12 мес. для всех; «К» (калибровка) — манометры и термоманометры 12 мес., термометры 24 мес.'}${S.me.admin?'':' Менять может администратор.'}</div>
-  <div class="mlist"><button class="g" data-x="xl">⬇ Скачать актуальный Excel</button><button class="g" data-x="pr">🖨 Печать QR (текущий выбор листов)</button><button class="g" data-x="nt">🔔 Push-уведомления</button>${S.me.admin?'<button class="g" data-x="us">👥 Люди и доступ</button><button class="g" data-x="im">⬆ Загрузить новую таблицу Excel</button>':''}<button class="r" data-x="lo">Выйти</button></div><div class="sub center">${esc(S.me.name||S.me.login)}${S.me.admin?' · администратор':''}</div>`);
-  const f={xl:exportXlsx,pr:printQR,nt:askNotify,us:users,im:importXlsx,lo:()=>{localStorage.removeItem('si_s');S.me=null;login()}};
-  m.querySelectorAll('[data-x]').forEach(b=>b.onclick=()=>{m.remove();f[b.dataset.x]()});
-  m.querySelectorAll('[data-md]').forEach(b=>b.onclick=async()=>{const md=b.dataset.md;if((S.cfg&&S.cfg.intervalMode||'rules')===md)return;
-    try{await upd('data/config.json',c=>({...(c||{}),intervalMode:md}),'config');await hist([{action:'setup',sheet:'',text:'Режим расчёта сроков: '+(md==='table'?'по столбцу таблицы':'по правилам')}]);S.cfg={...(S.cfg||{}),intervalMode:md};m.remove();draw()}catch(e){alert(e.message)}})}
+function profileDlg(){const m=modal(`<h3>${esc(S.me.name||S.me.login)}</h3><div class="sub">${S.me.admin?'Администратор':'Сотрудник'} · логин ${esc(S.me.login)}</div>
+  <div class="mlist"><button class="g" data-x="nt">🔔 Push-уведомления</button>${S.me.admin?'<button class="g" data-x="us">👥 Пользователи и доступ</button><button class="g" data-x="im">⬆ Загрузить новую таблицу Excel</button>':''}<button class="g" data-x="up">⟳ Обновить приложение</button><button class="r" data-x="lo">Выйти</button></div><div class="sub center">Версия ${VER}</div>`);
+  const f={nt:askNotify,us:users,im:importXlsx,up:hardUpdate,lo:logout};m.querySelectorAll('[data-x]').forEach(b=>b.onclick=()=>{m.remove();f[b.dataset.x]()})}
 async function act(a,sh,id){const r=S.sheets[sh].find(x=>x.id===id);
   try{
   if(a==='save'){const row={};document.querySelectorAll('.card [data-f]').forEach(i=>row[i.dataset.f]=i.value.trim());await ops([mk(sh,id,row)])}
