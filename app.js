@@ -1,4 +1,4 @@
-/* Учёт СИ · версия 4.0 */
+/* Учёт СИ · версия 5.0 */
 'use strict';
 const F=[['name','Наименование'],['type','Тип'],['sn','Заводской номер'],['year','Год выпуска'],['range','Диапазон измерений'],['cls','Класс точности'],['place','Место установки СИ'],['object','Объект установки'],['dept','Подразделение'],['inst','Дата установки'],['interval','Межповерочный интервал, мес.'],['date','Дата последней поверки / калибровки'],['kind','Поверка (П) / Калибровка (К)']];
 const $=s=>document.querySelector(s),app=$('#app');
@@ -7,24 +7,26 @@ const S={sheets:{},me:null,cur:'*',q:'',open:null,lim:40};
 const norm=s=>String(s||'').toLowerCase().replace(/[\s\-_.\/\\]/g,'');
 const group=r=>/термоманометр|манометр/i.test(r.name)?'Манометры':'Термометры';
 /* ---------- срок поверки ---------- */
-/* срок: режим «rules» — П (госповерка) 12 мес. для всех; К (калибровка): манометры и термоманометры 12, термометры 24.
-   режим «table» — «Межповерочный интервал» из таблицы (если пусто — как по правилам). Переключатель: Ещё → «Как считать срок» */
-const kindOf=r=>{const k=String(r.kind||'').trim().toLowerCase()[0];return k==='к'||k==='k'?'К':k==='п'||k==='p'?'П':''};
-function ivOf(r){if(S.cfg&&S.cfg.intervalMode==='table'){const t=parseInt(r.interval);if(t>0)return t}
-  if(kindOf(r)==='П')return 12;return /термометр/i.test(r.name)?24:12}
-function due(r){ // → {date:Date|null,text}
-  const raw=String(r.date||'').replace(/[\\\s]/g,''); if(!raw)return null;
-  const iv=ivOf(r);
-  let m,end;
-  if(m=raw.match(/^([1-4])[кk](\d{2})$/i)){const y=2000+ +m[2],q=+m[1]; end=new Date(y,q*3,0); end.setMonth(end.getMonth()+iv+0); end=new Date(end.getFullYear(),end.getMonth()+1,0);} // конец квартала
-  else if(m=raw.match(/^(\d{2})ДЯУ$/i)){end=new Date(2000+ +m[1]+iv/12,11,31)}                     // клеймо: до конца года
-  else if(m=raw.match(/^(\d{1,2})\.(\d{1,2})\.(\d{4})$/)){end=new Date(+m[3],+m[2]-1+iv,+m[1])}
-  else if(m=raw.match(/^(\d{1,2})\.(\d{4})$/)){end=new Date(+m[2],+m[1]-1+iv+1,0)}
-  else return null;
-  return end;
-}
-function status(r){const d=due(r);if(!d)return{c:'',t:'нет даты',d:null};const days=(d-new Date())/864e5;
-  const ds=d.toLocaleDateString('ru');return days<0?{c:'red',t:'просрочено',d:ds}:days<=92?{c:'yel',t:'скоро',d:ds}:{c:'grn',t:'годно',d:ds}}
+/* Срок. due() = первый день, когда СИ уже НЕ годен (4К25 → 01.10.2026 для манометра; 25ДЯУ: манометр → 01.01.2026, термометр → 01.01.2027).
+   «По правилам»: манометры и термоманометры 12 мес., термометры 24 мес. (П или К — не важно). «По столбцу таблицы»: столбец «Межповерочный интервал».
+   Форматы даты: 4К25, 3К25дяу, 25ДЯУ3к, дяу253к, 25ДЯУ, дд.мм.гггг, мм.гггг */
+function ivOf(r){if(S.cfg&&S.cfg.intervalMode==='table'){const t=parseInt(r.interval);if(t>0)return t}return /термометр/i.test(r.name)?24:12}
+const addm=(y,m0,k)=>{const t=y*12+m0+k;return[Math.floor(t/12),((t%12)+12)%12]};
+const today0=()=>{const t=new Date();t.setHours(0,0,0,0);return t};
+function due(r){
+  const raw=String(r.date||'').replace(/[\\\s]/g,'');if(!raw)return null;const iv=ivOf(r);let m;
+  if(m=raw.match(/^(\d{1,2})\.(\d{1,2})\.(\d{4})$/)){const[y,mo]=addm(+m[3],+m[2]-1,iv),d=Math.min(+m[1],new Date(y,mo+1,0).getDate());return new Date(y,mo,d+1)}
+  if(m=raw.match(/^(\d{1,2})\.(\d{4})$/)){const[y,mo]=addm(+m[2],+m[1]-1,iv+1);return new Date(y,mo,1)}
+  const t=raw.toLowerCase().replace(/[-_.,\/]/g,'');
+  for(const[p,qi,yi]of[[/^([1-4])[кk](\d{2})(?:дяу)?$/,1,2],[/^(\d{2})дяу([1-4])[кk]$/,2,1],[/^дяу(\d{2})([1-4])[кk]$/,2,1]])if(m=t.match(p)){const[y,mo]=addm(2000+ +m[yi],(+m[qi]-1)*3,iv);return new Date(y,mo,1)}
+  if(m=t.match(/^(?:(\d{2})дяу|дяу(\d{2}))$/)){const[y,mo]=addm(2000+ +(m[1]||m[2]),0,iv);return new Date(y,mo,1)}
+  return null}
+function status(r){const d=due(r);if(!d)return{c:'',d:null};const t=today0(),[y,mo]=addm(t.getFullYear(),t.getMonth(),3),lim=new Date(y,mo,Math.min(t.getDate(),new Date(y,mo+1,0).getDate()));
+  return{c:d<=t?'red':d<=lim?'yel':'grn',d:d.toLocaleDateString('ru')}}
+const dys=d=>Math.round((d-today0())/864e5);
+function ymd(d){const t=today0();let m=(d.getFullYear()-t.getFullYear())*12+d.getMonth()-t.getMonth(),a=new Date(t.getFullYear(),t.getMonth()+m,t.getDate());if(a>d){m--;a=new Date(t.getFullYear(),t.getMonth()+m,t.getDate())}return`${m} мес. ${Math.round((d-a)/864e5)} дн.`}
+function leftText(r,c){const d=due(r);if(!d)return'';const n=dys(d);
+  return c==='red'?(n<0?`Просрочено на ${-n} дн.`:'Срок истёк сегодня'):c==='yel'?`Осталось ${n} дн.`:`Годен ещё ${ymd(d)}`}
 /* ---------- GitHub как хранилище ---------- */
 const TE=new TextEncoder(),hex=b=>[...b].map(x=>x.toString(16).padStart(2,'0')).join(''),unhex=h=>Uint8Array.from(h.match(/../g),x=>parseInt(x,16));
 const b64=u=>{let s='';for(let i=0;i<u.length;i+=8192)s+=String.fromCharCode(...u.subarray(i,i+8192));return btoa(s)};
@@ -103,7 +105,7 @@ async function firstVault(){const ph=newPhrase();await txn(async rd=>{const u=(a
 async function login(){
   let U,V;try{S.gh=localStorage.si_g||'';[U,V]=await Promise.all([rd('data/users.json'),rd('data/vault.json')]);U=U.json||{users:[]};V=V.json}catch(e){app.innerHTML='<main><p style="color:var(--red)">'+esc(e.message)+'<br>Репозиторий: '+esc(REPO)+'</p></main>';return}
   const setup=!U.users.length,needKey=!S.gh&&!setup;
-  app.innerHTML=`<header><b>Учёт СИ</b></header><main><div class="mb" style="margin-top:30px"><h3>${setup?'Первый запуск: создайте администратора':'Вход'}</h3>
+  app.innerHTML=`<main><div class="hd" style="padding-top:36px"><img src="icon-192.png" alt=""><h1>Учёт средств измерений</h1><small>${setup?'первый запуск — создание администратора':'вход по логину и паролю'}</small></div><div class="mb" style="margin-top:18px">
   ${setup?'<div class="row"><input id="nm" placeholder="Ваше имя (для истории)"></div>':''}<div class="row"><input id="lg" placeholder="Логин" autocapitalize="none"></div><div class="row"><input id="pw" type="password" placeholder="Пароль (от 4 символов)"></div>
   ${setup?'<div class="row"><input id="tk" type="password" placeholder="Токен GitHub (Contents: Read and write)"></div>':''}
   ${needKey?(V?'<div class="row"><input id="ph" placeholder="Фраза бригады (один раз на этом телефоне)" autocapitalize="none"></div>':'<div class="row"><input id="tk" type="password" placeholder="Фраза бригады ещё не создана. Админ: введите токен GitHub"></div>'):''}
@@ -116,19 +118,20 @@ async function login(){
       if(needKey){if(V){try{S.gh=await openVault(V,$('#ph').value)}catch{throw new Error('Неверная фраза бригады')}}else{if(!admin)throw new Error('Фраза бригады ещё не создана — сначала войдите администратором');S.gh=$('#tk').value.trim()}localStorage.si_g=S.gh}}
     S.me={login:lg,name:nm,admin};localStorage.si_s=JSON.stringify(S.me);await start();if(ph){await hist([{action:'setup',sheet:'',text:'Создан администратор'}]);phraseDlg(ph)}}catch(e){$('#er').textContent=e.message}};
 }
-async function start(){try{await loadAll();draw();if(S.me.admin&&!(await rd('data/vault.json')).json)await firstVault()}
+async function start(){try{S.tab='j';await loadAll();draw();if(S.me.admin&&!(await rd('data/vault.json')).json)await firstVault()}
   catch(e){let c;try{c=JSON.parse(localStorage.si_idx||'null')}catch{}
     if(c&&c.every(m=>localStorage['si_c_'+m.file])&&!S.sheets.length){S.index=c;S.sheets=Object.fromEntries(c.map(m=>[m.name,JSON.parse(localStorage['si_c_'+m.file]).rows]));draw();alert('Нет связи с GitHub — показаны данные, сохранённые на телефоне. Изменить таблицу сейчас нельзя.')}else alert(e.message)}}
-document.addEventListener('visibilitychange',async()=>{if(document.visibilityState==='visible'&&S.me&&!S.open&&!document.querySelector('.modal')&&Date.now()-(S.lt||0)>20000){try{await loadAll();draw()}catch{}}});
+document.addEventListener('visibilitychange',async()=>{if(document.visibilityState==='visible'&&S.me&&!S.open&&S.tab!=='p'&&!document.querySelector('.modal')&&Date.now()-(S.lt||0)>20000){try{await loadAll();draw()}catch{}}});
 /* ---------- основной экран ---------- */
-const VER='4.0';
+const VER='5.0';
 const WORK=()=>Object.keys(S.sheets).filter(n=>!isRes(n)),RESV=()=>Object.keys(S.sheets).filter(isRes);
 const inRes=()=>S.cur==='#res'||(S.cur!=='*'&&isRes(S.cur));
 const items=()=>Object.entries(S.sheets).flatMap(([sh,rows])=>(S.cur==='*'?!isRes(sh):S.cur==='#res'?isRes(sh):S.cur===sh)?rows.map(r=>({sh,r})):[]);
 const KW=r=>/^[кk]/i.test(r.kind||'')?'Калибровка':/^п/i.test(r.kind||'')?'Поверка':'Срок';
 const pillText=(r,c)=>{const k=KW(r),s=k==='Срок';return c==='red'?(s?'Срок истёк':k+' просрочена'):c==='yel'?(s?'Скоро истекает':k+' истекает'):c==='grn'?(s?'Годен':k+' действует'):'Нет даты'};
-function dueText(r){const d=due(r);if(!d)return'';const raw=String(r.date||'').replace(/[\\\s]/g,''),ds=d.toLocaleDateString('ru');
-  if(/^[1-4][кk]\d{2}$/i.test(raw))return`до ${Math.ceil((d.getMonth()+1)/3)} кв. ${d.getFullYear()} (${ds})`;if(/ДЯУ$/i.test(raw))return`до конца ${d.getFullYear()} г.`;return'до '+ds}
+function dueText(r){const d=due(r);if(!d)return'';const t=String(r.date||'').replace(/[\\\s]/g,'').toLowerCase().replace(/[-_.,\/]/g,''),ds=d.toLocaleDateString('ru');
+  if(/^[1-4][кk]\d{2}(дяу)?$|^\d{2}дяу[1-4][кk]$|^дяу\d{2}[1-4][кk]$/.test(t))return`до начала ${Math.floor(d.getMonth()/3)+1} кв. ${d.getFullYear()} (${ds})`;
+  if(/дяу/.test(t))return`до начала ${d.getFullYear()} г.`;return'до '+new Date(d.getFullYear(),d.getMonth(),d.getDate()-1).toLocaleDateString('ru')}
 const RK={red:0,yel:1,grn:2,'':3};
 function setBadge(){const n=Object.entries(S.sheets).reduce((a,[sh,rows])=>a+(isRes(sh)?0:rows.filter(r=>status(r).c==='red').length),0);
   try{if(n){navigator.setAppBadge&&navigator.setAppBadge(n)}else{navigator.clearAppBadge&&navigator.clearAppBadge()}}catch{}}
@@ -136,12 +139,14 @@ async function setMode(md){if(!S.me.admin||(S.cfg&&S.cfg.intervalMode||'rules')=
   try{await upd('data/config.json',c=>({...(c||{}),intervalMode:md}),'config');await hist([{action:'setup',sheet:'',text:'Режим расчёта сроков: '+(md==='table'?'по столбцу таблицы':'по правилам')}]);S.cfg={...(S.cfg||{}),intervalMode:md};draw()}catch(e){alert(e.message)}}
 function logout(){localStorage.removeItem('si_s');S.me=null;login()}
 async function hardUpdate(){try{(await navigator.serviceWorker.getRegistrations()).forEach(r=>r.unregister());(await caches.keys()).forEach(k=>caches.delete(k))}catch{}location.reload()}
-function draw(){
+function draw(){if(S.tab==='h')return drawHist();if(S.tab==='p')return drawPeople();
   setBadge();const res=inRes(),mode=(S.cfg&&S.cfg.intervalMode)==='table'?'table':'rules';
   const all=items().map(x=>({...x,s:status(x.r)})),n={red:0,yel:0,grn:0,'':0},by={red:{},yel:{}};
   all.forEach(({r,s})=>{n[s.c]++;if(by[s.c]){const g=r.name.trim();by[s.c][g]=(by[s.c][g]||0)+1}});
   const tchips=c=>Object.entries(by[c]).sort((a,b)=>b[1]-a[1]).map(([k,v])=>`<button class="tc ${S.tp===k&&S.flt===c?'on':''}" data-t="${c}" data-tp="${esc(k)}">${esc(k)} <b>${v}</b></button>`).join('')||'<span class="sub">нет</span>';
-  const stat=(c,l)=>`<div class="stat ${c} ${S.flt===c&&!S.tp?'on':''}" data-t="${c}"><div class="sn2">${n[c]}</div><div class="sb"><div class="sl">${l}</div>${c==='grn'?'<div class="sub">срок действует более 3 месяцев</div>':`<div class="tcs">${tchips(c)}</div>`}</div></div>`;
+  const rng=c=>{const a=all.filter(x=>x.s.c===c).map(x=>due(x.r)).filter(Boolean).sort((p,q)=>p-q);return a.length?[a[0],a[a.length-1]]:null},ry=rng('yel'),rg=rng('grn');
+  const sub={yel:ry?(dys(ry[0])===dys(ry[1])?`осталось ${dys(ry[0])} дн.`:`осталось от ${dys(ry[0])} до ${dys(ry[1])} дн.`):'',grn:rg?`годны ещё от ${ymd(rg[0])} до ${ymd(rg[1])}`:'',red:''};
+  const stat=(c,l)=>`<div class="stat ${c} ${S.flt===c&&!S.tp?'on':''}" data-t="${c}"><div class="sn2">${n[c]}</div><div class="sb"><div class="sl">${l}</div>${sub[c]?`<div class="sub">${sub[c]}</div>`:''}${c==='grn'?'':`<div class="tcs">${tchips(c)}</div>`}</div></div>`;
   const tk=S.q.toLowerCase().split(/\s+/).filter(Boolean),fl=S.flt;
   const list=all.filter(x=>(!fl||(fl==='none'?x.s.c==='':x.s.c===fl))&&(!S.tp||x.r.name.trim()===S.tp)&&tk.every(t=>(x.sh+' '+Object.values(x.r).join(' ')).toLowerCase().includes(t))).sort((a,b)=>(RK[a.s.c]-RK[b.s.c])||((due(a.r)||0)-(due(b.r)||0)));
   const scs=Object.keys(S.sheets).filter(sh=>S.cur==='*'?!isRes(sh):S.cur==='#res'?isRes(sh):S.cur===sh),oth=scs.reduce((a,sh)=>a+(metaOf(sh).other||0),0),hasOth=scs.some(sh=>metaOf(sh).other!==undefined);
@@ -153,15 +158,15 @@ function draw(){
   app.innerHTML=`<main><div class="hd"><img src="icon-192.png" alt=""><h1>Учёт средств измерений</h1><small>${esc(S.me.name||S.me.login)}${S.me.admin?' · администратор':''} · v${VER}</small></div>
   ${res?'':`<div class="acts2"><button class="big" data-x="scan">📷 Сканировать QR</button><button class="g" data-x="batch">📦 Установка пачкой</button><button class="g" data-x="pr">🖨 Печать QR</button><button class="g" data-x="xl">⬇ Скачать Excel</button>${S.me.admin?'<button class="g" data-x="im">⬆ Загрузить Excel</button>':'<button class="g" data-x="nt">🔔 Уведомления</button>'}</div>
   <div class="set"><div class="sl">Как считать срок поверки / калибровки</div><div class="seg"><button class="${mode==='rules'?'on':''}" data-md="rules" ${dis}>По правилам</button><button class="${mode==='table'?'on':''}" data-md="table" ${dis}>По столбцу таблицы</button></div>
-  <div class="sub" style="margin-top:8px">${mode==='table'?'Берётся «Межповерочный интервал» из таблицы (если пуст — по правилам).':'«П» (госповерка) — 12 мес. для всех; «К» (калибровка) — манометры и термоманометры 12 мес., термометры 24 мес.'}${S.me.admin?'':' Менять может администратор.'}</div></div>`}
+  </div>`}
   <div class="tot"><b>${all.length}</b> ${res?'в резерве':'манометров и термометров на учёте'}${hasOth&&!res?` · <b>${all.length+oth}</b> СИ всего (все типы)`:''}</div>
-  ${stat('red','Просрочено')}${stat('yel','Скоро (менее 3 месяцев)')}${stat('grn','Годны')}${rb}
+  ${stat('red','Просрочено')}${stat('yel','Скоро истекает')}${stat('grn','Годны')}${rb}
   <div class="srch"><input id="q" type="search" placeholder="Поиск по номеру, типу или месту" value="${esc(S.q)}"></div>
   <select id="sh">${res?`<option value="#res">Весь резерв</option>${RESV().map(k=>`<option ${k===S.cur?'selected':''}>${esc(k)}</option>`).join('')}`:`<option value="*">Все рабочие листы</option>${WORK().map(k=>`<option ${k===S.cur?'selected':''}>${esc(k)}</option>`).join('')}`}</select>
   <div class="chips">${chip('','Все',all.length)}${chip('red','Просрочено',n.red)}${chip('yel','Скоро',n.yel)}${chip('grn','Годны',n.grn)}${chip('none','Без даты',n[''])}</div>
   <div class="cnt">Показано ${Math.min(S.lim,list.length)} из ${list.length} · ${esc(scopeName)}${S.tp?` · тип: ${esc(S.tp)}<button class="g s" data-clr="1">✕</button>`:''}${fl||S.tp?'':' · сверху просроченные'}</div>
   <div id="ls">${list.slice(0,S.lim).map(({sh,r})=>card(sh,r)).join('')}${list.length>S.lim?`<button class="g" style="width:100%" id="more">Показать ещё ${Math.min(40,list.length-S.lim)}</button>`:''}${list.length?'':'<p class="center sub">Ничего не найдено</p>'}</div></main>
-  <nav class="bar"><button data-n="j" class="${res?'':'on'}"><span>📋</span>Журнал</button><button data-n="r" class="${res?'on':''}"><span>📦</span>Резерв</button><button class="fab" data-n="scan" aria-label="Сканировать QR"><span>📷</span></button><button data-n="hist"><span>🕘</span>История</button><button data-n="p"><span>👤</span>Люди</button></nav>`;
+  ${bar()}`;
   $('#sh').onchange=e=>{S.cur=e.target.value;S.lim=40;draw()};
   $('#q').oninput=e=>{S.q=e.target.value;S.lim=40;clearTimeout(S.tm);S.tm=setTimeout(()=>{draw();const q=$('#q');q.focus();q.setSelectionRange(99,99)},250)};
   document.querySelectorAll('[data-t]').forEach(e=>e.onclick=ev=>{ev.stopPropagation();const t=e.dataset.t,tp=e.dataset.tp||'';
@@ -174,18 +179,15 @@ function draw(){
   document.querySelectorAll('[data-a]').forEach(b=>b.onclick=ev=>{ev.stopPropagation();b.dataset.a==='place'?fromReserve(b.dataset.sh,b.dataset.id):act(b.dataset.a,b.dataset.sh,b.dataset.id)});
   document.querySelectorAll('[data-md]').forEach(b=>b.onclick=()=>setMode(b.dataset.md));
   document.querySelectorAll('.acts2 [data-x]').forEach(b=>b.onclick=()=>({scan:scanOne,batch,pr:printQR,xl:exportXlsx,im:importXlsx,nt:askNotify}[b.dataset.x]()));
-  document.querySelectorAll('[data-n]').forEach(b=>b.onclick=()=>({j:()=>{S.cur='*';S.q='';S.flt='';S.tp='';S.open=null;S.lim=40;draw();scrollTo(0,0)},r:()=>{S.cur='#res';S.q='';S.flt='';S.tp='';S.open=null;S.lim=40;draw();scrollTo(0,0)},hist:history,scan:scanOne,p:profileDlg}[b.dataset.n]()));
+  wireBar();
 }
 function card(sh,r){const s=status(r),c=s.c,o=S.open===sh+'|'+r.id,res=isRes(sh);
   const place=res?`Резерв${r.thread?' · резьба '+esc(r.thread):''}${r.orient?' · штуцер '+esc(r.orient):''}`:`${esc(r.place||'место не указано')}${r.object?' · '+esc(r.object):''}`;
   return `<div class="card ${c}"><div class="ch" data-o="${esc(sh+'|'+r.id)}"><div class="c1"><div><div class="nm">${esc(r.name)}</div><div class="ty">${esc(r.type)}</div></div><span class="pill">${pillText(r,c)}</span></div>
   <span class="sn">${esc(r.sn||'б/н')}</span><div class="pl">${place} · <span class="tag">${esc(sh)}</span></div><div class="pl">${esc(r.range)}</div>
-  <div class="du ${c||'no'}">${r.date?esc(r.date)+(r.kind?' · '+esc(r.kind):'')+(s.d?' · '+dueText(r)+' · '+ivOf(r)+' мес.':''):'Дата поверки не указана'}</div></div>
+  ${s.d?`<div class="pl">${esc(r.date)}${r.kind?' · '+esc(r.kind):''} · ${dueText(r)} · ${ivOf(r)} мес.</div><div class="du ${c}">${leftText(r,c)}</div>`:`<div class="du no">${r.date?esc(r.date)+' — формат даты не распознан':'Дата поверки не указана'}</div>`}</div>
   ${o?`<div class="fm">${fieldsOf(sh).map(([k,l])=>`<div><label>${l}</label><input data-f="${k}" value="${esc(r[k])}"></div>`).join('')}</div>
   <div class="acts"><button data-a="save" data-sh="${esc(sh)}" data-id="${r.id}">💾 Сохранить</button><button class="g" data-a="qr" data-sh="${esc(sh)}" data-id="${r.id}">QR</button>${res?`<button class="g" data-a="place" data-sh="${esc(sh)}" data-id="${r.id}">➜ Поставить на место</button>`:`<button class="g" data-a="swap" data-sh="${esc(sh)}" data-id="${r.id}">⇄ Поменять</button>`}<button class="r" data-a="del" data-sh="${esc(sh)}" data-id="${r.id}">Удалить</button></div>`:''}</div>`}
-function profileDlg(){const m=modal(`<h3>${esc(S.me.name||S.me.login)}</h3><div class="sub">${S.me.admin?'Администратор':'Сотрудник'} · логин ${esc(S.me.login)}</div>
-  <div class="mlist"><button class="g" data-x="nt">🔔 Push-уведомления</button>${S.me.admin?'<button class="g" data-x="us">👥 Пользователи и доступ</button><button class="g" data-x="im">⬆ Загрузить новую таблицу Excel</button>':''}<button class="g" data-x="up">⟳ Обновить приложение</button><button class="r" data-x="lo">Выйти</button></div><div class="sub center">Версия ${VER}</div>`);
-  const f={nt:askNotify,us:users,im:importXlsx,up:hardUpdate,lo:logout};m.querySelectorAll('[data-x]').forEach(b=>b.onclick=()=>{m.remove();f[b.dataset.x]()})}
 async function act(a,sh,id){const r=S.sheets[sh].find(x=>x.id===id);
   try{
   if(a==='save'){const row={};document.querySelectorAll('.card [data-f]').forEach(i=>row[i.dataset.f]=i.value.trim());await ops([mk(sh,id,row)])}
@@ -221,7 +223,7 @@ async function scanCode(cont){ // cont(q) вызывается на каждый
     m.querySelector('#fi').onchange=e=>{const f=e.target.files[0];if(!f)return;const im=new Image();im.onload=async()=>{const t=await decode(im);if(t)await handle(t);else msg('На фото QR не найден. Снимите ближе и ровнее.')};im.src=URL.createObjectURL(f)};
     (async function tick(){if(!alive)return;try{const t=await decode(v);if(t)await handle(t)}catch{}if(alive)setTimeout(tick,120)})();});
 }
-async function scanOne(){const q=await scanCode();if(!q)return;const f=find(q);if(f){S.cur=f.sh;S.flt='';S.q=f.r.sn;S.open=f.sh+'|'+f.r.id;draw();scrollTo(0,0)}else addDlg(q)}
+async function scanOne(){const q=await scanCode();if(!q)return;const f=find(q);if(f){S.tab='j';S.cur=f.sh;S.flt='';S.q=f.r.sn;S.open=f.sh+'|'+f.r.id;draw();scrollTo(0,0)}else addDlg(q)}
 /* ---------- добавление нового СИ: на выбранное место листа ---------- */
 function addDlg(q){
   let best=null,bs=-1;
@@ -280,7 +282,7 @@ function fromReserve(sh,id){
     if(i<0)list.push({op:'add',sheet:ws,nid:'n'+t,row});
     else{const T=rows[i];if(old==='res'){const rs=RESV().includes('Резерв б|у')?'Резерв б|у':RESV()[0];list.push({op:'add',sheet:rs,nid:'n'+t+'r',row:{name:T.name,type:T.type,sn:T.sn,year:T.year,range:T.range,cls:T.cls,interval:T.interval,date:T.date}})}
       list.push({op:'del',sheet:ws,id:T.id},{op:'add',sheet:ws,nid:'n'+t,row,afterId:i>0?rows[i-1].id:'__first'})}
-    try{await ops(list);S.cur=ws;S.flt='';S.q=row.sn;draw();scrollTo(0,0)}catch(e){alert(e.message)}}}
+    try{await ops(list);S.tab='j';S.cur=ws;S.flt='';S.q=row.sn;draw();scrollTo(0,0)}catch(e){alert(e.message)}}}
 /* ---------- загрузка новой таблицы Excel (админ): заменяет данные и оригинал для выгрузки ---------- */
 const RXJ=/манометр|термометр\s+биметалл|термоманометр/i,RKJ=['name','type','sn','year','range','cls','thread','interval','date','orient'];
 function parseBook(book){let ri=0,zi=0;const rows=[],metas=[];
@@ -306,23 +308,34 @@ function importXlsx(){const inp=document.createElement('input');inp.type='file';
 async function exportXlsx(){const r=await fetch(gu('/contents/Perechen_SI.xlsx?ref=excel&t='+Date.now()),{headers:{...hd(),Accept:'application/vnd.github.raw'}});
   if(!r.ok)return alert('Excel ещё не сформирован. Он собирается через 1–2 минуты после последней правки. Первый раз: в репозитории Actions → export-xlsx → Run workflow.');
   const a=document.createElement('a');a.href=URL.createObjectURL(await r.blob());a.download='Перечень_СИ.xlsx';a.click()}
-async function history(){let dir=[];try{dir=await g('/contents/data/history?t='+Date.now())}catch{}
-  const files=dir.map(f=>f.name).sort().reverse(),A={import:'загрузил таблицу',upd:'изменил',add:'добавил',del:'удалил',user:'пользователи',setup:'настройка'};let n=0;
-  const m=modal(`<h3>История</h3><div id="hl"></div><div class="row"><button class="g" id="hm">Показать более ранние</button><button class="g" onclick="this.closest('.modal').remove()">Закрыть</button></div>`);
-  const more=async()=>{const f=files[n++];if(!f){m.querySelector('#hl').innerHTML||(m.querySelector('#hl').textContent='Пока пусто');m.querySelector('#hm').style.display='none';return}
-    const h=(await rd('data/history/'+f)).json||[];m.querySelector('#hl').insertAdjacentHTML('beforeend','<small>'+esc(f.slice(0,7))+'</small>'+h.map(x=>`<div class="hist"><small>${new Date(x.t).toLocaleString('ru')} · <b>${esc(x.user)}</b> ${A[x.action]||x.action}${x.sheet?' · '+esc(x.sheet):''}</small><br>${esc(x.text)}</div>`).join(''));if(n>=files.length)m.querySelector('#hm').style.display='none'};
-  m.querySelector('#hm').onclick=more;await more()}
-async function users(){const U=(await rd('data/users.json')).json;const m=modal(`<h3>Пользователи</h3>${U.users.map(x=>`<div class="hist"><b>${esc(x.name||x.login)}</b> <small>логин: ${esc(x.login)}${x.admin?' · админ':''}</small> <button class="g s" data-r="${esc(x.login)}">имя</button> ${x.admin?'':`<button class="r s" data-d="${esc(x.login)}">удалить</button>`}</div>`).join('')}
-  <div class="row"><input id="nn" placeholder="Имя (например: Иванов И.)"></div><div class="row"><input id="nl" placeholder="Логин" autocapitalize="none"><input id="np" placeholder="Пароль"></div><div class="row"><button id="na">Создать</button><button class="g" id="nk">🔑 Фраза / токен</button><button class="g" id="nc">Закрыть</button></div>`);
-  m.querySelector('#nc').onclick=()=>m.remove();
-  m.querySelector('#nk').onclick=async()=>{const t=prompt('Новый токен GitHub (оставьте пустым, чтобы сменить только фразу):');if(t===null)return;const old=S.gh,tok=t.trim()||S.gh,ph=newPhrase();
-    try{S.gh=tok;const v=await mkVault(tok,ph);await upd('data/vault.json',()=>v,'vault');if(t.trim())localStorage.si_g=tok;await hist([{action:'user',sheet:'',text:t.trim()?'Заменены токен и фраза бригады':'Заменена фраза бригады'}]);m.remove();phraseDlg(ph)}catch(e){S.gh=old;alert(e.message)}};
-  m.querySelector('#na').onclick=async()=>{try{const nl=$('#nl').value.trim(),np=$('#np').value,nn=$('#nn').value.trim()||nl;if(!nl||np.length<4)throw new Error('Логин и пароль (от 4 символов)');const salt=salt16(),d=await kdf(np,salt);
-    await upd('data/users.json',u=>{if(u.users.some(x=>x.login===nl))throw new Error('Логин занят');u.users.push({login:nl,name:nn,salt,hash:d.h});return u},'user '+nl);await hist([{action:'user',sheet:'',text:'Создан пользователь '+nn+' ('+nl+')'}]);m.remove();users()}catch(e){alert(e.message)}};
-  m.querySelectorAll('[data-r]').forEach(b=>b.onclick=async()=>{const lg=b.dataset.r,cur=U.users.find(x=>x.login===lg),n=(prompt('Имя для «'+lg+'»',cur.name||lg)||'').trim();if(!n)return;
-    try{await upd('data/users.json',u=>{u.users.find(x=>x.login===lg).name=n;return u},'user name');await hist([{action:'user',sheet:'',text:'Имя пользователя '+lg+' → '+n}]);
-      if(lg===S.me.login){S.me.name=n;localStorage.si_s=JSON.stringify(S.me);draw()}m.remove();users()}catch(e){alert(e.message)}});
-  m.querySelectorAll('[data-d]').forEach(b=>b.onclick=async()=>{if(confirm('Удалить '+b.dataset.d+'?')){await upd('data/users.json',u=>({users:u.users.filter(x=>x.login!==b.dataset.d)}),'user del');await hist([{action:'user',sheet:'',text:'Удалён пользователь '+b.dataset.d}]);m.remove();users()}})}
+/* ---------- вкладки «История» и «Люди» ---------- */
+const NAV={j:()=>{S.tab='j';S.cur='*';S.q='';S.flt='';S.tp='';S.open=null;S.lim=40;draw();scrollTo(0,0)},r:()=>{S.tab='j';S.cur='#res';S.q='';S.flt='';S.tp='';S.open=null;S.lim=40;draw();scrollTo(0,0)},hist:()=>{S.tab='h';draw();scrollTo(0,0)},scan:()=>scanOne(),p:()=>{S.tab='p';draw();scrollTo(0,0)}};
+function bar(){const tb=S.tab==='h'||S.tab==='p'?S.tab:'j',res=tb==='j'&&inRes();
+  return `<nav class="bar"><button data-n="j" class="${tb==='j'&&!res?'on':''}"><span>📋</span>Журнал</button><button data-n="r" class="${res?'on':''}"><span>📦</span>Резерв</button><button class="fab" data-n="scan" aria-label="Сканировать QR"><span>📷</span></button><button data-n="hist" class="${tb==='h'?'on':''}"><span>🕘</span>История</button><button data-n="p" class="${tb==='p'?'on':''}"><span>👤</span>Люди</button></nav>`}
+const wireBar=()=>document.querySelectorAll('[data-n]').forEach(b=>b.onclick=()=>NAV[b.dataset.n]());
+async function drawHist(){
+  app.innerHTML=`<main><div class="hd"><h1>История</h1><small>кто, что и когда менял</small></div><div class="set" id="hl"><p class="sub center">Загрузка…</p></div><div class="row"><button class="g" id="hm" style="display:none">Показать более ранние записи</button></div></main>${bar()}`;wireBar();
+  let dir=[];try{dir=await g('/contents/data/history?t='+Date.now())}catch{}
+  const files=dir.map(f=>f.name).sort().reverse(),A={import:'загрузил таблицу',upd:'изменил',add:'добавил',del:'удалил',user:'пользователи',setup:'настройка'};let n=0,first=true;
+  const more=async()=>{if(S.tab!=='h')return;const f=files[n++];if(!f){if(first)$('#hl').innerHTML='<p class="sub center">Пока пусто</p>';$('#hm').style.display='none';return}
+    const h=(await rd('data/history/'+f)).json||[];if(S.tab!=='h')return;if(first){$('#hl').innerHTML='';first=false}
+    $('#hl').insertAdjacentHTML('beforeend','<div class="sub" style="margin-top:8px"><b>'+esc(f.slice(0,7))+'</b></div>'+h.map(x=>`<div class="hist"><small>${new Date(x.t).toLocaleString('ru')} · <b>${esc(x.user)}</b> ${A[x.action]||x.action}${x.sheet?' · '+esc(x.sheet):''}</small><br>${esc(x.text)}</div>`).join(''));$('#hm').style.display=n>=files.length?'none':''};
+  $('#hm').onclick=more;try{await more()}catch(e){if($('#hl'))$('#hl').innerHTML='<p class="sub center">'+esc(e.message)+'</p>'}}
+async function rotateKey(){const t=prompt('Новый токен GitHub (оставьте пустым, чтобы сменить только фразу):');if(t===null)return;const old=S.gh,tok=t.trim()||S.gh,ph=newPhrase();
+  try{S.gh=tok;const v=await mkVault(tok,ph);await upd('data/vault.json',()=>v,'vault');if(t.trim())localStorage.si_g=tok;await hist([{action:'user',sheet:'',text:t.trim()?'Заменены токен и фраза бригады':'Заменена фраза бригады'}]);phraseDlg(ph)}catch(e){S.gh=old;alert(e.message)}}
+async function drawPeople(){const adm=S.me.admin;
+  app.innerHTML=`<main><div class="hd"><h1>Люди</h1><small>${esc(S.me.name||S.me.login)}${adm?' · администратор':' · сотрудник'} · v${VER}</small></div>
+  <div class="set"><div class="sl">Мой профиль</div><div class="sub">Логин: ${esc(S.me.login)}</div><div class="mlist"><button class="g" data-p="nt">🔔 Push-уведомления</button><button class="g" data-p="up">⟳ Обновить приложение</button><button class="r" data-p="lo">Выйти</button></div></div>
+  ${adm?'<div class="set"><div class="sl">Пользователи</div><div id="ul"><p class="sub">Загрузка…</p></div></div><div class="set"><div class="sl">Доступ и таблица</div><div class="mlist"><button class="g" data-p="kk">🔑 Фраза бригады / токен</button><button class="g" data-p="im">⬆ Загрузить новую таблицу Excel</button></div></div>':''}</main>${bar()}`;wireBar();
+  document.querySelectorAll('[data-p]').forEach(b=>b.onclick=()=>({nt:askNotify,up:hardUpdate,lo:logout,kk:rotateKey,im:importXlsx}[b.dataset.p]()));
+  if(!adm)return;let U;try{U=(await rd('data/users.json')).json}catch(e){if($('#ul'))$('#ul').innerHTML='<p class="sub">'+esc(e.message)+'</p>';return}
+  if(S.tab!=='p'||!$('#ul'))return;
+  $('#ul').innerHTML=U.users.map(x=>`<div class="hist"><b>${esc(x.name||x.login)}</b> <small>логин: ${esc(x.login)}${x.admin?' · админ':''}</small><div class="row" style="margin:6px 0 0"><button class="g s" data-r="${esc(x.login)}">изменить имя</button>${x.admin?'':`<button class="r s" data-d="${esc(x.login)}">удалить</button>`}</div></div>`).join('')+`<div class="row"><input id="nn" placeholder="Имя (например: Иванов И.)"></div><div class="row"><input id="nl" placeholder="Логин" autocapitalize="none"><input id="np" placeholder="Пароль"></div><div class="row"><button id="na">Создать пользователя</button></div>`;
+  $('#na').onclick=async()=>{try{const nl=$('#nl').value.trim(),np=$('#np').value,nn=$('#nn').value.trim()||nl;if(!nl||np.length<4)throw new Error('Логин и пароль (от 4 символов)');const salt=salt16(),d=await kdf(np,salt);
+    await upd('data/users.json',u=>{if(u.users.some(x=>x.login===nl))throw new Error('Логин занят');u.users.push({login:nl,name:nn,salt,hash:d.h});return u},'user '+nl);await hist([{action:'user',sheet:'',text:'Создан пользователь '+nn+' ('+nl+')'}]);drawPeople()}catch(e){alert(e.message)}};
+  document.querySelectorAll('[data-r]').forEach(b=>b.onclick=async()=>{const lg=b.dataset.r,cur=U.users.find(x=>x.login===lg),n=(prompt('Имя для «'+lg+'»',cur.name||lg)||'').trim();if(!n)return;
+    try{await upd('data/users.json',u=>{u.users.find(x=>x.login===lg).name=n;return u},'user name');await hist([{action:'user',sheet:'',text:'Имя пользователя '+lg+' → '+n}]);if(lg===S.me.login){S.me.name=n;localStorage.si_s=JSON.stringify(S.me)}drawPeople()}catch(e){alert(e.message)}});
+  document.querySelectorAll('[data-d]').forEach(b=>b.onclick=async()=>{if(!confirm('Удалить '+b.dataset.d+'?'))return;try{await upd('data/users.json',u=>({users:u.users.filter(x=>x.login!==b.dataset.d)}),'user del');await hist([{action:'user',sheet:'',text:'Удалён пользователь '+b.dataset.d}]);drawPeople()}catch(e){alert(e.message)}})}
 const u8=s=>{const p='='.repeat((4-s.length%4)%4);return unb64((s+p).replace(/-/g,'+').replace(/_/g,'/'))};
 async function askNotify(){try{if(!('Notification' in window)||!('PushManager' in window)||!('serviceWorker' in navigator))return alert('Этот браузер не поддерживает push. На iPhone: откройте сайт в Safari → «Поделиться» → «На экран Домой», запустите приложение с иконки и нажмите 🔔 снова (нужен iOS 16.4 и новее). На Android используйте Chrome.');if(await Notification.requestPermission()!=='granted')return alert('Уведомления запрещены в настройках браузера');
   const cfg=(await rd('data/config.json')).json,reg=await navigator.serviceWorker.ready,sub=await reg.pushManager.subscribe({userVisibleOnly:true,applicationServerKey:u8(cfg.vapid)});
