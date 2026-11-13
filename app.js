@@ -1,4 +1,4 @@
-/* Учёт СИ · версия 5.0 */
+/* Учёт СИ · версия 5.1 */
 'use strict';
 const F=[['name','Наименование'],['type','Тип'],['sn','Заводской номер'],['year','Год выпуска'],['range','Диапазон измерений'],['cls','Класс точности'],['place','Место установки СИ'],['object','Объект установки'],['dept','Подразделение'],['inst','Дата установки'],['interval','Межповерочный интервал, мес.'],['date','Дата последней поверки / калибровки'],['kind','Поверка (П) / Калибровка (К)']];
 const $=s=>document.querySelector(s),app=$('#app');
@@ -113,8 +113,8 @@ async function login(){
   $('#go').onclick=async()=>{try{const lg=$('#lg').value.trim(),pw=$('#pw').value;if(!lg||pw.length<4)throw new Error('Введите логин и пароль (от 4 символов)');let admin,nm,ph;
     if(setup){const gh=$('#tk').value.trim();S.gh=gh;const rr=await g('');if(!rr.permissions?.push)throw new Error('Токен не даёт права записи в '+REPO);
       nm=$('#nm').value.trim()||lg;ph=newPhrase();const salt=salt16(),d=await kdf(pw,salt);
-      await txn(async()=>({'data/users.json':{users:[{login:lg,name:nm,admin:true,salt,hash:d.h}]},'data/vault.json':await mkVault(gh,ph)}),'setup');admin=true;localStorage.si_g=gh}
-    else{const u=U.users.find(x=>x.login===lg);if(!u)throw new Error('Неверный логин или пароль');const d=await kdf(pw,u.salt);if(d.h!==u.hash)throw new Error('Неверный логин или пароль');admin=!!u.admin;nm=u.name||u.login;
+      await txn(async()=>({'data/users.json':{users:[{login:lg,name:nm,admin:true,salt,hash:d.h}]},'data/vault.json':await mkVault(gh,ph)}),'setup');admin=true;localStorage.si_g=gh;localStorage.si_ak=hex(d.k)}
+    else{const u=U.users.find(x=>x.login===lg);if(!u)throw new Error('Неверный логин или пароль');const d=await kdf(pw,u.salt);if(d.h!==u.hash)throw new Error('Неверный логин или пароль');admin=!!u.admin;nm=u.name||u.login;if(admin)localStorage.si_ak=hex(d.k);else localStorage.removeItem('si_ak');
       if(needKey){if(V){try{S.gh=await openVault(V,$('#ph').value)}catch{throw new Error('Неверная фраза бригады')}}else{if(!admin)throw new Error('Фраза бригады ещё не создана — сначала войдите администратором');S.gh=$('#tk').value.trim()}localStorage.si_g=S.gh}}
     S.me={login:lg,name:nm,admin};localStorage.si_s=JSON.stringify(S.me);await start();if(ph){await hist([{action:'setup',sheet:'',text:'Создан администратор'}]);phraseDlg(ph)}}catch(e){$('#er').textContent=e.message}};
 }
@@ -123,7 +123,7 @@ async function start(){try{S.tab='j';await loadAll();draw();if(S.me.admin&&!(awa
     if(c&&c.every(m=>localStorage['si_c_'+m.file])&&!S.sheets.length){S.index=c;S.sheets=Object.fromEntries(c.map(m=>[m.name,JSON.parse(localStorage['si_c_'+m.file]).rows]));draw();alert('Нет связи с GitHub — показаны данные, сохранённые на телефоне. Изменить таблицу сейчас нельзя.')}else alert(e.message)}}
 document.addEventListener('visibilitychange',async()=>{if(document.visibilityState==='visible'&&S.me&&!S.open&&S.tab!=='p'&&!document.querySelector('.modal')&&Date.now()-(S.lt||0)>20000){try{await loadAll();draw()}catch{}}});
 /* ---------- основной экран ---------- */
-const VER='5.0';
+const VER='5.1';
 const WORK=()=>Object.keys(S.sheets).filter(n=>!isRes(n)),RESV=()=>Object.keys(S.sheets).filter(isRes);
 const inRes=()=>S.cur==='#res'||(S.cur!=='*'&&isRes(S.cur));
 const items=()=>Object.entries(S.sheets).flatMap(([sh,rows])=>(S.cur==='*'?!isRes(sh):S.cur==='#res'?isRes(sh):S.cur===sh)?rows.map(r=>({sh,r})):[]);
@@ -137,7 +137,7 @@ function setBadge(){const n=Object.entries(S.sheets).reduce((a,[sh,rows])=>a+(is
   try{if(n){navigator.setAppBadge&&navigator.setAppBadge(n)}else{navigator.clearAppBadge&&navigator.clearAppBadge()}}catch{}}
 async function setMode(md){if(!S.me.admin||(S.cfg&&S.cfg.intervalMode||'rules')===md)return;
   try{await upd('data/config.json',c=>({...(c||{}),intervalMode:md}),'config');await hist([{action:'setup',sheet:'',text:'Режим расчёта сроков: '+(md==='table'?'по столбцу таблицы':'по правилам')}]);S.cfg={...(S.cfg||{}),intervalMode:md};draw()}catch(e){alert(e.message)}}
-function logout(){localStorage.removeItem('si_s');S.me=null;login()}
+function logout(){localStorage.removeItem('si_s');localStorage.removeItem('si_ak');S.me=null;login()}
 async function hardUpdate(){try{(await navigator.serviceWorker.getRegistrations()).forEach(r=>r.unregister());(await caches.keys()).forEach(k=>caches.delete(k))}catch{}location.reload()}
 function draw(){if(S.tab==='h')return drawHist();if(S.tab==='p')return drawPeople();
   setBadge();const res=inRes(),mode=(S.cfg&&S.cfg.intervalMode)==='table'?'table':'rules';
@@ -148,11 +148,16 @@ function draw(){if(S.tab==='h')return drawHist();if(S.tab==='p')return drawPeopl
   const sub={yel:ry?(dys(ry[0])===dys(ry[1])?`осталось ${dys(ry[0])} дн.`:`осталось от ${dys(ry[0])} до ${dys(ry[1])} дн.`):'',grn:rg?`годны ещё от ${ymd(rg[0])} до ${ymd(rg[1])}`:'',red:''};
   const stat=(c,l)=>`<div class="stat ${c} ${S.flt===c&&!S.tp?'on':''}" data-t="${c}"><div class="sn2">${n[c]}</div><div class="sb"><div class="sl">${l}</div>${sub[c]?`<div class="sub">${sub[c]}</div>`:''}${c==='grn'?'':`<div class="tcs">${tchips(c)}</div>`}</div></div>`;
   const tk=S.q.toLowerCase().split(/\s+/).filter(Boolean),fl=S.flt;
-  const list=all.filter(x=>(!fl||(fl==='none'?x.s.c==='':x.s.c===fl))&&(!S.tp||x.r.name.trim()===S.tp)&&tk.every(t=>(x.sh+' '+Object.values(x.r).join(' ')).toLowerCase().includes(t))).sort((a,b)=>(RK[a.s.c]-RK[b.s.c])||((due(a.r)||0)-(due(b.r)||0)));
+  const list=all.filter(x=>(!fl||(fl==='none'?x.s.c==='':x.s.c===fl))&&(!S.tp||x.r.name.trim()===S.tp)&&Object.entries(S.ff||{}).every(([k,v])=>!v||String(x.r[k]||'').trim()===v)&&tk.every(t=>(x.sh+' '+Object.values(x.r).join(' ')).toLowerCase().includes(t))).sort((a,b)=>(RK[a.s.c]-RK[b.s.c])||((due(a.r)||0)-(due(b.r)||0)));
   const scs=Object.keys(S.sheets).filter(sh=>S.cur==='*'?!isRes(sh):S.cur==='#res'?isRes(sh):S.cur===sh),oth=scs.reduce((a,sh)=>a+(metaOf(sh).other||0),0),hasOth=scs.some(sh=>metaOf(sh).other!==undefined);
   let rb='';if(!res&&RESV().length){const q={red:0,yel:0,'':0};RESV().forEach(sh=>S.sheets[sh].forEach(r=>q[status(r).c]++));
     rb=`<div class="stat res" data-go="res"><div class="sn2">${q.red}</div><div class="sb"><div class="sl">Резерв: срок истёк</div><div class="sub">скоро истекает: ${q.yel} · без даты: ${q['']}<br>Нажмите, чтобы открыть резерв</div></div></div>`}
   const chip=(f,l,v)=>`<button class="chip ${(fl||'')===f?'on':''}" data-t="${f}">${l}<em>${v}</em></button>`;
+  const FFK=['dept','object','name','type','range','cls','year','kind','thread','orient'].filter(k=>scs.some(sh=>keysOf(sh).includes(k)));
+  const FFv=k=>{const m=new Map();all.forEach(x=>{const v=String(x.r[k]??'').trim();if(v)m.set(v,(m.get(v)||0)+1)});const sl=(S.ff||{})[k];if(sl&&!m.has(sl))m.set(sl,0);return[...m.entries()].sort((a,b)=>a[0].localeCompare(b[0],'ru',{numeric:true}))};
+  const nff=Object.values(S.ff||{}).filter(Boolean).length;
+  const ffh=`<div class="row"><button class="g" data-fo="1">⚙ Фильтры по полям${nff?' · выбрано '+nff:''}</button></div>${S.fo?`<div class="set"><div class="fm2">${FFK.map(k=>`<div><label>${ALL[k]}</label><select data-ff="${k}"><option value="">Любое</option>${FFv(k).map(([v,c])=>`<option value="${esc(v)}" ${(S.ff||{})[k]===v?'selected':''}>${esc(v)} (${c})</option>`).join('')}</select></div>`).join('')}</div><div class="row"><button class="g s" data-ffr="1">Сбросить все фильтры</button></div></div>`:''}`;
+  const ffc=Object.entries(S.ff||{}).filter(([k,v])=>v).map(([k,v])=>`<button class="g s" data-ffx="${k}">${ALL[k]}: ${esc(v)} ✕</button>`).join('');
   const scopeName=S.cur==='*'?'все рабочие листы':S.cur==='#res'?'весь резерв':S.cur;
   const dis=S.me.admin?'':'disabled';
   app.innerHTML=`<main><div class="hd"><img src="icon-192.png" alt=""><h1>Учёт средств измерений</h1><small>${esc(S.me.name||S.me.login)}${S.me.admin?' · администратор':''} · v${VER}</small></div>
@@ -161,19 +166,24 @@ function draw(){if(S.tab==='h')return drawHist();if(S.tab==='p')return drawPeopl
   </div>`}
   <div class="tot"><b>${all.length}</b> ${res?'в резерве':'манометров и термометров на учёте'}${hasOth&&!res?` · <b>${all.length+oth}</b> СИ всего (все типы)`:''}</div>
   ${stat('red','Просрочено')}${stat('yel','Скоро истекает')}${stat('grn','Годны')}${rb}
-  <div class="srch"><input id="q" type="search" placeholder="Поиск по номеру, типу или месту" value="${esc(S.q)}"></div>
+  <div class="srch"><input id="q" type="search" placeholder="Поиск по всем полям: номер, тип, место…" value="${esc(S.q)}"></div>
   <select id="sh">${res?`<option value="#res">Весь резерв</option>${RESV().map(k=>`<option ${k===S.cur?'selected':''}>${esc(k)}</option>`).join('')}`:`<option value="*">Все рабочие листы</option>${WORK().map(k=>`<option ${k===S.cur?'selected':''}>${esc(k)}</option>`).join('')}`}</select>
+  ${ffh}
   <div class="chips">${chip('','Все',all.length)}${chip('red','Просрочено',n.red)}${chip('yel','Скоро',n.yel)}${chip('grn','Годны',n.grn)}${chip('none','Без даты',n[''])}</div>
-  <div class="cnt">Показано ${Math.min(S.lim,list.length)} из ${list.length} · ${esc(scopeName)}${S.tp?` · тип: ${esc(S.tp)}<button class="g s" data-clr="1">✕</button>`:''}${fl||S.tp?'':' · сверху просроченные'}</div>
+  <div class="cnt">Показано ${Math.min(S.lim,list.length)} из ${list.length} · ${esc(scopeName)}${S.tp?` · тип: ${esc(S.tp)}<button class="g s" data-clr="1">✕</button>`:''}${fl||S.tp?'':' · сверху просроченные'}${ffc?`<div class="ffc">${ffc}</div>`:''}</div>
   <div id="ls">${list.slice(0,S.lim).map(({sh,r})=>card(sh,r)).join('')}${list.length>S.lim?`<button class="g" style="width:100%" id="more">Показать ещё ${Math.min(40,list.length-S.lim)}</button>`:''}${list.length?'':'<p class="center sub">Ничего не найдено</p>'}</div></main>
   ${bar()}`;
-  $('#sh').onchange=e=>{S.cur=e.target.value;S.lim=40;draw()};
+  $('#sh').onchange=e=>{S.cur=e.target.value;S.ff={};S.lim=40;draw()};
   $('#q').oninput=e=>{S.q=e.target.value;S.lim=40;clearTimeout(S.tm);S.tm=setTimeout(()=>{draw();const q=$('#q');q.focus();q.setSelectionRange(99,99)},250)};
   document.querySelectorAll('[data-t]').forEach(e=>e.onclick=ev=>{ev.stopPropagation();const t=e.dataset.t,tp=e.dataset.tp||'';
     if(tp){const same=S.flt===t&&S.tp===tp;S.flt=same?'':t;S.tp=same?'':tp}else{S.flt=(S.flt===t&&!S.tp||t==='')?'':t;S.tp=''}
     S.lim=40;draw();if(S.flt)$('#ls').scrollIntoView({behavior:'smooth'})});
+  document.querySelectorAll('[data-fo]').forEach(b=>b.onclick=()=>{S.fo=!S.fo;draw()});
+  document.querySelectorAll('[data-ff]').forEach(s=>s.onchange=()=>{S.ff=S.ff||{};S.ff[s.dataset.ff]=s.value;S.lim=40;draw()});
+  document.querySelectorAll('[data-ffx]').forEach(b=>b.onclick=()=>{S.ff[b.dataset.ffx]='';draw()});
+  const fr=document.querySelector('[data-ffr]');if(fr)fr.onclick=()=>{S.ff={};draw()};
   const cl=document.querySelector('[data-clr]');if(cl)cl.onclick=()=>{S.tp='';S.flt='';draw()};
-  const rs=document.querySelector('[data-go]');if(rs)rs.onclick=()=>{S.cur='#res';S.flt='';S.tp='';S.lim=40;draw();scrollTo(0,0)};
+  const rs=document.querySelector('[data-go]');if(rs)rs.onclick=()=>{S.cur='#res';S.flt='';S.tp='';S.ff={};S.lim=40;draw();scrollTo(0,0)};
   const mo=$('#more');if(mo)mo.onclick=()=>{S.lim+=40;draw()};
   document.querySelectorAll('[data-o]').forEach(e=>e.onclick=()=>{S.open=S.open===e.dataset.o?null:e.dataset.o;draw()});
   document.querySelectorAll('[data-a]').forEach(b=>b.onclick=ev=>{ev.stopPropagation();b.dataset.a==='place'?fromReserve(b.dataset.sh,b.dataset.id):act(b.dataset.a,b.dataset.sh,b.dataset.id)});
@@ -309,7 +319,7 @@ async function exportXlsx(){const r=await fetch(gu('/contents/Perechen_SI.xlsx?r
   if(!r.ok)return alert('Excel ещё не сформирован. Он собирается через 1–2 минуты после последней правки. Первый раз: в репозитории Actions → export-xlsx → Run workflow.');
   const a=document.createElement('a');a.href=URL.createObjectURL(await r.blob());a.download='Перечень_СИ.xlsx';a.click()}
 /* ---------- вкладки «История» и «Люди» ---------- */
-const NAV={j:()=>{S.tab='j';S.cur='*';S.q='';S.flt='';S.tp='';S.open=null;S.lim=40;draw();scrollTo(0,0)},r:()=>{S.tab='j';S.cur='#res';S.q='';S.flt='';S.tp='';S.open=null;S.lim=40;draw();scrollTo(0,0)},hist:()=>{S.tab='h';draw();scrollTo(0,0)},scan:()=>scanOne(),p:()=>{S.tab='p';draw();scrollTo(0,0)}};
+const NAV={j:()=>{S.tab='j';S.cur='*';S.q='';S.flt='';S.tp='';S.ff={};S.open=null;S.lim=40;draw();scrollTo(0,0)},r:()=>{S.tab='j';S.cur='#res';S.q='';S.flt='';S.tp='';S.ff={};S.open=null;S.lim=40;draw();scrollTo(0,0)},hist:()=>{S.tab='h';draw();scrollTo(0,0)},scan:()=>scanOne(),p:()=>{S.tab='p';draw();scrollTo(0,0)}};
 function bar(){const tb=S.tab==='h'||S.tab==='p'?S.tab:'j',res=tb==='j'&&inRes();
   return `<nav class="bar"><button data-n="j" class="${tb==='j'&&!res?'on':''}"><span>📋</span>Журнал</button><button data-n="r" class="${res?'on':''}"><span>📦</span>Резерв</button><button class="fab" data-n="scan" aria-label="Сканировать QR"><span>📷</span></button><button data-n="hist" class="${tb==='h'?'on':''}"><span>🕘</span>История</button><button data-n="p" class="${tb==='p'?'on':''}"><span>👤</span>Люди</button></nav>`}
 const wireBar=()=>document.querySelectorAll('[data-n]').forEach(b=>b.onclick=()=>NAV[b.dataset.n]());
@@ -323,16 +333,26 @@ async function drawHist(){
   $('#hm').onclick=more;try{await more()}catch(e){if($('#hl'))$('#hl').innerHTML='<p class="sub center">'+esc(e.message)+'</p>'}}
 async function rotateKey(){const t=prompt('Новый токен GitHub (оставьте пустым, чтобы сменить только фразу):');if(t===null)return;const old=S.gh,tok=t.trim()||S.gh,ph=newPhrase();
   try{S.gh=tok;const v=await mkVault(tok,ph);await upd('data/vault.json',()=>v,'vault');if(t.trim())localStorage.si_g=tok;await hist([{action:'user',sheet:'',text:t.trim()?'Заменены токен и фраза бригады':'Заменена фраза бригады'}]);phraseDlg(ph)}catch(e){S.gh=old;alert(e.message)}}
+const mkPw=async p=>{const ak=localStorage.si_ak;return ak?await encTok(p,unhex(ak)):undefined};
+async function showPass(lg,U){const x=U.users.find(y=>y.login===lg);if(!localStorage.si_ak)return alert('Чтобы видеть пароли, выйдите и войдите заново администратором.');
+  if(!x||!x.pw)return alert('Для «'+lg+'» пароль не сохранён (пользователь создан до этой функции). Нажмите «Новый пароль», задайте его и сообщите сотруднику.');
+  try{alert('Логин: '+lg+'\nПароль: '+await decTok(x.pw,unhex(localStorage.si_ak))+'\n\nНа новом телефоне ещё понадобится фраза бригады.')}catch{alert('Не удалось расшифровать пароль. Выйдите и войдите заново администратором.')}}
+async function setPass(lg){const np=prompt('Новый пароль для «'+lg+'» (от 4 символов):');if(np===null)return;if(np.length<4)return alert('Пароль — от 4 символов');
+  try{const salt=salt16(),d=await kdf(np,salt),pwenc=await mkPw(np);await upd('data/users.json',u=>{const x=u.users.find(y=>y.login===lg);x.salt=salt;x.hash=d.h;if(pwenc)x.pw=pwenc;else delete x.pw;return u},'user pass');
+    await hist([{action:'user',sheet:'',text:'Новый пароль для '+lg}]);alert('Пароль для «'+lg+'» изменён. Сообщите его сотруднику.');drawPeople()}catch(e){alert(e.message)}}
 async function drawPeople(){const adm=S.me.admin;
   app.innerHTML=`<main><div class="hd"><h1>Люди</h1><small>${esc(S.me.name||S.me.login)}${adm?' · администратор':' · сотрудник'} · v${VER}</small></div>
-  <div class="set"><div class="sl">Мой профиль</div><div class="sub">Логин: ${esc(S.me.login)}</div><div class="mlist"><button class="g" data-p="nt">🔔 Push-уведомления</button><button class="g" data-p="up">⟳ Обновить приложение</button><button class="r" data-p="lo">Выйти</button></div></div>
-  ${adm?'<div class="set"><div class="sl">Пользователи</div><div id="ul"><p class="sub">Загрузка…</p></div></div><div class="set"><div class="sl">Доступ и таблица</div><div class="mlist"><button class="g" data-p="kk">🔑 Фраза бригады / токен</button><button class="g" data-p="im">⬆ Загрузить новую таблицу Excel</button></div></div>':''}</main>${bar()}`;wireBar();
-  document.querySelectorAll('[data-p]').forEach(b=>b.onclick=()=>({nt:askNotify,up:hardUpdate,lo:logout,kk:rotateKey,im:importXlsx}[b.dataset.p]()));
+  <div class="set"><div class="sl">Мой профиль</div><div class="sub">Логин: ${esc(S.me.login)}</div><div id="acc" class="sub" style="margin-top:8px">Проверяю подключение…</div><div class="mlist"><button class="g" data-p="nt">🔔 Push-уведомления<small>включить сообщения о просроченных СИ на этом телефоне</small></button><button class="g" data-p="up">⟳ Обновить приложение<small>скачать последнюю версию программы; данные и вход не затрагиваются</small></button><button class="r" data-p="lo">Выйти</button></div></div>
+  ${adm?'<div class="set"><div class="sl">Пользователи</div><div id="ul"><p class="sub">Загрузка…</p></div></div><div class="set"><div class="sl">Доступ к таблице</div><div class="sub">Вставлять токен или фразу бригады при работе не нужно: после первого входа токен хранится на телефоне, и правки уходят в общую таблицу сами. Фраза нужна только сотруднику при входе с нового телефона. Кнопка ниже нужна редко: если вы меняете токен GitHub (истёк срок, ушёл сотрудник) или хотите выдать новую фразу.</div><div class="mlist"><button class="g" data-p="kk">🔑 Сменить токен / фразу бригады</button></div></div>':''}</main>${bar()}`;wireBar();
+  document.querySelectorAll('[data-p]').forEach(b=>b.onclick=()=>({nt:askNotify,up:hardUpdate,lo:logout,kk:rotateKey}[b.dataset.p]()));
+  g('').then(r=>{const e=$('#acc');if(e)e.innerHTML=r.permissions&&r.permissions.push?'✓ <b>Подключено.</b> Правки с этого телефона уходят в общую таблицу автоматически, ничего вставлять не нужно.':'⚠ Токен этого телефона не даёт права записи. Выйдите и войдите заново (понадобится фраза бригады).'}).catch(()=>{const e=$('#acc');if(e)e.textContent='⚠ Нет связи с GitHub: правки сейчас не уйдут. Проверьте интернет.'});
   if(!adm)return;let U;try{U=(await rd('data/users.json')).json}catch(e){if($('#ul'))$('#ul').innerHTML='<p class="sub">'+esc(e.message)+'</p>';return}
   if(S.tab!=='p'||!$('#ul'))return;
-  $('#ul').innerHTML=U.users.map(x=>`<div class="hist"><b>${esc(x.name||x.login)}</b> <small>логин: ${esc(x.login)}${x.admin?' · админ':''}</small><div class="row" style="margin:6px 0 0"><button class="g s" data-r="${esc(x.login)}">изменить имя</button>${x.admin?'':`<button class="r s" data-d="${esc(x.login)}">удалить</button>`}</div></div>`).join('')+`<div class="row"><input id="nn" placeholder="Имя (например: Иванов И.)"></div><div class="row"><input id="nl" placeholder="Логин" autocapitalize="none"><input id="np" placeholder="Пароль"></div><div class="row"><button id="na">Создать пользователя</button></div>`;
-  $('#na').onclick=async()=>{try{const nl=$('#nl').value.trim(),np=$('#np').value,nn=$('#nn').value.trim()||nl;if(!nl||np.length<4)throw new Error('Логин и пароль (от 4 символов)');const salt=salt16(),d=await kdf(np,salt);
-    await upd('data/users.json',u=>{if(u.users.some(x=>x.login===nl))throw new Error('Логин занят');u.users.push({login:nl,name:nn,salt,hash:d.h});return u},'user '+nl);await hist([{action:'user',sheet:'',text:'Создан пользователь '+nn+' ('+nl+')'}]);drawPeople()}catch(e){alert(e.message)}};
+  $('#ul').innerHTML=U.users.map(x=>`<div class="hist"><b>${esc(x.name||x.login)}</b> <small>логин: ${esc(x.login)}${x.admin?' · админ':''}</small><div class="row" style="margin:6px 0 0"><button class="g s" data-r="${esc(x.login)}">изменить имя</button>${x.admin?'':`<button class="g s" data-v="${esc(x.login)}">👁 Показать пароль</button><button class="g s" data-np="${esc(x.login)}">Новый пароль</button><button class="r s" data-d="${esc(x.login)}">удалить</button>`}</div></div>`).join('')+(localStorage.si_ak?'':'<p class="sub">Чтобы видеть пароли, выйдите и войдите заново (администратором).</p>')+`<div class="row"><input id="nn" placeholder="Имя (например: Иванов И.)"></div><div class="row"><input id="nl" placeholder="Логин" autocapitalize="none"><input id="np" placeholder="Пароль"></div><div class="row"><button id="na">Создать пользователя</button></div>`;
+  $('#na').onclick=async()=>{try{const nl=$('#nl').value.trim(),np=$('#np').value,nn=$('#nn').value.trim()||nl;if(!nl||np.length<4)throw new Error('Логин и пароль (от 4 символов)');const salt=salt16(),d=await kdf(np,salt),pwenc=await mkPw(np);
+    await upd('data/users.json',u=>{if(u.users.some(x=>x.login===nl))throw new Error('Логин занят');u.users.push({login:nl,name:nn,salt,hash:d.h,pw:pwenc});return u},'user '+nl);await hist([{action:'user',sheet:'',text:'Создан пользователь '+nn+' ('+nl+')'}]);drawPeople()}catch(e){alert(e.message)}};
+  document.querySelectorAll('[data-v]').forEach(b=>b.onclick=()=>showPass(b.dataset.v,U));
+  document.querySelectorAll('[data-np]').forEach(b=>b.onclick=()=>setPass(b.dataset.np));
   document.querySelectorAll('[data-r]').forEach(b=>b.onclick=async()=>{const lg=b.dataset.r,cur=U.users.find(x=>x.login===lg),n=(prompt('Имя для «'+lg+'»',cur.name||lg)||'').trim();if(!n)return;
     try{await upd('data/users.json',u=>{u.users.find(x=>x.login===lg).name=n;return u},'user name');await hist([{action:'user',sheet:'',text:'Имя пользователя '+lg+' → '+n}]);if(lg===S.me.login){S.me.name=n;localStorage.si_s=JSON.stringify(S.me)}drawPeople()}catch(e){alert(e.message)}});
   document.querySelectorAll('[data-d]').forEach(b=>b.onclick=async()=>{if(!confirm('Удалить '+b.dataset.d+'?'))return;try{await upd('data/users.json',u=>({users:u.users.filter(x=>x.login!==b.dataset.d)}),'user del');await hist([{action:'user',sheet:'',text:'Удалён пользователь '+b.dataset.d}]);drawPeople()}catch(e){alert(e.message)}})}
