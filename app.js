@@ -1,4 +1,4 @@
-/* Учёт СИ · версия 5.1 */
+/* Учёт СИ · версия 5.2 */
 'use strict';
 const F=[['name','Наименование'],['type','Тип'],['sn','Заводской номер'],['year','Год выпуска'],['range','Диапазон измерений'],['cls','Класс точности'],['place','Место установки СИ'],['object','Объект установки'],['dept','Подразделение'],['inst','Дата установки'],['interval','Межповерочный интервал, мес.'],['date','Дата последней поверки / калибровки'],['kind','Поверка (П) / Калибровка (К)']];
 const $=s=>document.querySelector(s),app=$('#app');
@@ -88,7 +88,7 @@ async function ops(list){
   draw()}
 const lib=(u,t)=>window[t]?Promise.resolve():new Promise((ok,no)=>{const s=document.createElement('script');s.src=u;s.onload=ok;s.onerror=()=>no(new Error('Не удалось загрузить библиотеку (нужен интернет)'));document.head.appendChild(s)});
 const QRL=()=>lib('https://cdn.jsdelivr.net/npm/qrcode-generator@1.4.4/qrcode.js','qrcode').then(()=>{qrcode.stringToBytes=qrcode.stringToBytesFuncs['UTF-8']});
-const qrSvg=(r,sz=4)=>{const q=qrcode(0,'L');q.addData('SI1|'+[r.name,r.type,r.sn,r.range].map(x=>String(x||'').replace(/\|/g,'/')).join('|'));q.make();return q.createSvgTag({cellSize:sz,margin:2,scalable:true})};
+const qrSvg=(r,sz=4,withId)=>{return qrMake(r,withId).createSvgTag({cellSize:sz,margin:2,scalable:true})};const _qrSvgOld=(r,sz=4)=>{const q=qrcode(0,'L');q.addData('SI1|'+[r.name,r.type,r.sn,r.range].map(x=>String(x||'').replace(/\|/g,'/')).join('|'));q.make();return q.createSvgTag({cellSize:sz,margin:2,scalable:true})};
 function modal(html){const m=document.createElement('div');m.className='modal';m.innerHTML='<div class="mb">'+html+'</div>';m.onclick=e=>{if(e.target===m)m.remove()};document.body.appendChild(m);return m}
 /* ---------- вход: личный логин/пароль (кто правит) + фраза бригады (открывает токен GitHub) ---------- */
 async function kdf(pw,salt,it){const k=await crypto.subtle.importKey('raw',TE.encode(pw),'PBKDF2',false,['deriveBits']);const b=new Uint8Array(await crypto.subtle.deriveBits({name:'PBKDF2',salt:unhex(salt),iterations:it||200000,hash:'SHA-256'},k,512));return{h:hex(b.slice(0,32)),k:b.slice(32)}}
@@ -123,7 +123,7 @@ async function start(){try{S.tab='j';await loadAll();draw();if(S.me.admin&&!(awa
     if(c&&c.every(m=>localStorage['si_c_'+m.file])&&!S.sheets.length){S.index=c;S.sheets=Object.fromEntries(c.map(m=>[m.name,JSON.parse(localStorage['si_c_'+m.file]).rows]));draw();alert('Нет связи с GitHub — показаны данные, сохранённые на телефоне. Изменить таблицу сейчас нельзя.')}else alert(e.message)}}
 document.addEventListener('visibilitychange',async()=>{if(document.visibilityState==='visible'&&S.me&&!S.open&&S.tab!=='p'&&!document.querySelector('.modal')&&Date.now()-(S.lt||0)>20000){try{await loadAll();draw()}catch{}}});
 /* ---------- основной экран ---------- */
-const VER='5.1';
+const VER='5.2';
 const WORK=()=>Object.keys(S.sheets).filter(n=>!isRes(n)),RESV=()=>Object.keys(S.sheets).filter(isRes);
 const inRes=()=>S.cur==='#res'||(S.cur!=='*'&&isRes(S.cur));
 const items=()=>Object.entries(S.sheets).flatMap(([sh,rows])=>(S.cur==='*'?!isRes(sh):S.cur==='#res'?isRes(sh):S.cur===sh)?rows.map(r=>({sh,r})):[]);
@@ -141,17 +141,18 @@ function logout(){localStorage.removeItem('si_s');localStorage.removeItem('si_ak
 async function hardUpdate(){try{(await navigator.serviceWorker.getRegistrations()).forEach(r=>r.unregister());(await caches.keys()).forEach(k=>caches.delete(k))}catch{}location.reload()}
 function draw(){if(S.tab==='h')return drawHist();if(S.tab==='p')return drawPeople();
   setBadge();const res=inRes(),mode=(S.cfg&&S.cfg.intervalMode)==='table'?'table':'rules';
-  const all=items().map(x=>({...x,s:status(x.r)})),n={red:0,yel:0,grn:0,'':0},by={red:{},yel:{}};
+  const all=items().map(x=>({...x,s:status(x.r)})),n={red:0,yel:0,grn:0,'':0},by={red:{},yel:{},grn:{},'':{}};
   all.forEach(({r,s})=>{n[s.c]++;if(by[s.c]){const g=r.name.trim();by[s.c][g]=(by[s.c][g]||0)+1}});
-  const tchips=c=>Object.entries(by[c]).sort((a,b)=>b[1]-a[1]).map(([k,v])=>`<button class="tc ${S.tp===k&&S.flt===c?'on':''}" data-t="${c}" data-tp="${esc(k)}">${esc(k)} <b>${v}</b></button>`).join('')||'<span class="sub">нет</span>';
+  const tchips=c=>Object.entries(by[c]).sort((a,b)=>b[1]-a[1]).map(([k,v])=>`<button class="tc ${S.tp===k&&S.flt===(c||'none')?'on':''}" data-t="${c||'none'}" data-tp="${esc(k)}">${esc(k)} <b>${v}</b></button>`).join('')||'<span class="sub">нет</span>';
   const rng=c=>{const a=all.filter(x=>x.s.c===c).map(x=>due(x.r)).filter(Boolean).sort((p,q)=>p-q);return a.length?[a[0],a[a.length-1]]:null},ry=rng('yel'),rg=rng('grn');
-  const sub={yel:ry?(dys(ry[0])===dys(ry[1])?`осталось ${dys(ry[0])} дн.`:`осталось от ${dys(ry[0])} до ${dys(ry[1])} дн.`):'',grn:rg?`годны ещё от ${ymd(rg[0])} до ${ymd(rg[1])}`:'',red:''};
-  const stat=(c,l)=>`<div class="stat ${c} ${S.flt===c&&!S.tp?'on':''}" data-t="${c}"><div class="sn2">${n[c]}</div><div class="sb"><div class="sl">${l}</div>${sub[c]?`<div class="sub">${sub[c]}</div>`:''}${c==='grn'?'':`<div class="tcs">${tchips(c)}</div>`}</div></div>`;
+  const sub={yel:ry?(dys(ry[0])===dys(ry[1])?`осталось ${dys(ry[0])} дн.`:`осталось от ${dys(ry[0])} до ${dys(ry[1])} дн.`):'',grn:rg?`годны ещё от ${ymd(rg[0])} до ${ymd(rg[1])}`:'',red:'','':'дата поверки не указана'};
+  const stat=(c,l)=>`<div class="stat ${c||'none'} ${S.flt===(c||'none')&&!S.tp?'on':''}" data-t="${c||'none'}"><div class="sn2">${n[c]}</div><div class="sb"><div class="sl">${l}</div>${sub[c]?`<div class="sub">${sub[c]}</div>`:''}<div class="tcs">${tchips(c)}</div></div></div>`;
   const tk=S.q.toLowerCase().split(/\s+/).filter(Boolean),fl=S.flt;
   const list=all.filter(x=>(!fl||(fl==='none'?x.s.c==='':x.s.c===fl))&&(!S.tp||x.r.name.trim()===S.tp)&&Object.entries(S.ff||{}).every(([k,v])=>!v||String(x.r[k]||'').trim()===v)&&tk.every(t=>(x.sh+' '+Object.values(x.r).join(' ')).toLowerCase().includes(t))).sort((a,b)=>(RK[a.s.c]-RK[b.s.c])||((due(a.r)||0)-(due(b.r)||0)));
   const scs=Object.keys(S.sheets).filter(sh=>S.cur==='*'?!isRes(sh):S.cur==='#res'?isRes(sh):S.cur===sh),oth=scs.reduce((a,sh)=>a+(metaOf(sh).other||0),0),hasOth=scs.some(sh=>metaOf(sh).other!==undefined);
-  let rb='';if(!res&&RESV().length){const q={red:0,yel:0,'':0};RESV().forEach(sh=>S.sheets[sh].forEach(r=>q[status(r).c]++));
-    rb=`<div class="stat res" data-go="res"><div class="sn2">${q.red}</div><div class="sb"><div class="sl">Резерв: срок истёк</div><div class="sub">скоро истекает: ${q.yel} · без даты: ${q['']}<br>Нажмите, чтобы открыть резерв</div></div></div>`}
+  let rb='';if(!res&&RESV().length){const q={red:0,yel:0,grn:0,'':0},qb={};RESV().forEach(sh=>S.sheets[sh].forEach(r=>{const c=status(r).c;q[c]++;if(c==='red'){const g=r.name.trim();qb[g]=(qb[g]||0)+1}}));
+    const tot=q.red+q.yel+q.grn+q[''],cc=(f,l,v)=>`<button class="tc" data-rg="${f}">${l} <b>${v}</b></button>`;
+    rb=`<div class="stat res" data-go="res"><div class="sn2">${q.red}</div><div class="sb"><div class="sl">Резерв: срок истёк</div><div class="sub">всего в резерве: ${tot}</div><div class="tcs">${cc('red','Просрочено',q.red)}${cc('yel','Скоро',q.yel)}${cc('grn','Годны',q.grn)}${cc('none','Без даты',q[''])}</div><div class="sub" style="margin-top:8px">просрочены по типам:</div><div class="tcs">${Object.entries(qb).sort((a,b)=>b[1]-a[1]).map(([k,v])=>`<button class="tc" data-rg="red" data-tp="${esc(k)}">${esc(k)} <b>${v}</b></button>`).join('')||'<span class="sub">нет</span>'}</div></div></div>`}
   const chip=(f,l,v)=>`<button class="chip ${(fl||'')===f?'on':''}" data-t="${f}">${l}<em>${v}</em></button>`;
   const FFK=['dept','object','name','type','range','cls','year','kind','thread','orient'].filter(k=>scs.some(sh=>keysOf(sh).includes(k)));
   const FFv=k=>{const m=new Map();all.forEach(x=>{const v=String(x.r[k]??'').trim();if(v)m.set(v,(m.get(v)||0)+1)});const sl=(S.ff||{})[k];if(sl&&!m.has(sl))m.set(sl,0);return[...m.entries()].sort((a,b)=>a[0].localeCompare(b[0],'ru',{numeric:true}))};
@@ -165,7 +166,7 @@ function draw(){if(S.tab==='h')return drawHist();if(S.tab==='p')return drawPeopl
   <div class="set"><div class="sl">Как считать срок поверки / калибровки</div><div class="seg"><button class="${mode==='rules'?'on':''}" data-md="rules" ${dis}>По правилам</button><button class="${mode==='table'?'on':''}" data-md="table" ${dis}>По столбцу таблицы</button></div>
   </div>`}
   <div class="tot"><b>${all.length}</b> ${res?'в резерве':'манометров и термометров на учёте'}${hasOth&&!res?` · <b>${all.length+oth}</b> СИ всего (все типы)`:''}</div>
-  ${stat('red','Просрочено')}${stat('yel','Скоро истекает')}${stat('grn','Годны')}${rb}
+  ${stat('red','Просрочено')}${stat('yel','Скоро истекает')}${stat('grn','Годны')}${stat('','Без даты')}${rb}
   <div class="srch"><input id="q" type="search" placeholder="Поиск по всем полям: номер, тип, место…" value="${esc(S.q)}"></div>
   <select id="sh">${res?`<option value="#res">Весь резерв</option>${RESV().map(k=>`<option ${k===S.cur?'selected':''}>${esc(k)}</option>`).join('')}`:`<option value="*">Все рабочие листы</option>${WORK().map(k=>`<option ${k===S.cur?'selected':''}>${esc(k)}</option>`).join('')}`}</select>
   ${ffh}
@@ -183,6 +184,7 @@ function draw(){if(S.tab==='h')return drawHist();if(S.tab==='p')return drawPeopl
   document.querySelectorAll('[data-ffx]').forEach(b=>b.onclick=()=>{S.ff[b.dataset.ffx]='';draw()});
   const fr=document.querySelector('[data-ffr]');if(fr)fr.onclick=()=>{S.ff={};draw()};
   const cl=document.querySelector('[data-clr]');if(cl)cl.onclick=()=>{S.tp='';S.flt='';draw()};
+  document.querySelectorAll('[data-rg]').forEach(b=>b.onclick=ev=>{ev.stopPropagation();S.tab='j';S.cur='#res';S.flt=b.dataset.rg;S.tp=b.dataset.tp||'';S.ff={};S.q='';S.lim=40;draw();scrollTo(0,0)});
   const rs=document.querySelector('[data-go]');if(rs)rs.onclick=()=>{S.cur='#res';S.flt='';S.tp='';S.ff={};S.lim=40;draw();scrollTo(0,0)};
   const mo=$('#more');if(mo)mo.onclick=()=>{S.lim+=40;draw()};
   document.querySelectorAll('[data-o]').forEach(e=>e.onclick=()=>{S.open=S.open===e.dataset.o?null:e.dataset.o;draw()});
@@ -202,16 +204,49 @@ async function act(a,sh,id){const r=S.sheets[sh].find(x=>x.id===id);
   try{
   if(a==='save'){const row={};document.querySelectorAll('.card [data-f]').forEach(i=>row[i.dataset.f]=i.value.trim());await ops([mk(sh,id,row)])}
   if(a==='del'&&confirm(`Удалить из таблицы?\n${r.name} ${r.type} №${r.sn}`)){S.open=null;await ops([{op:'del',sheet:sh,id}])}
-  if(a==='qr'){await QRL();const m=modal(`<div class="center" style="max-width:300px;margin:auto">${qrSvg(r,6)}<p>${esc(r.name)} ${esc(r.type)}<br>№${esc(r.sn)} · ${esc(r.range)}<br><b>${esc(r.place)}</b></p><button class="g" onclick="this.closest('.modal').remove()">Закрыть</button></div>`)}
-  if(a==='swap'){alert('Отсканируйте QR второго СИ, с которым нужно поменяться местами');const q=await scanCode();if(!q)return;const f=find(q);if(!f||f.sh!==sh)return alert('Второй прибор не найден на этом листе');
+  if(a==='qr'){await QRL();const m=modal(`<div class="center" style="max-width:300px;margin:auto">${qrSvg(r,6,dupKeys().has(keyOf(r)))}<p>${esc(r.name)} ${esc(r.type)}<br>№${esc(r.sn)} · ${esc(r.range)}<br><b>${esc(r.place)}</b></p><p class="sub">В коде записано: ${esc(qrText(r,dupKeys().has(keyOf(r))))}</p><button class="g" onclick="this.closest('.modal').remove()">Закрыть</button></div>`)}
+  if(a==='swap'){alert('Отсканируйте QR второго СИ, с которым нужно поменяться местами');const q=await scanCode();if(!q)return;const f=pick(q);if(!f||f.sh!==sh)return alert('Второй прибор не найден на этом листе');
     const P=['place','object','dept','inst'],a1={},b1={};P.forEach(k=>{a1[k]=f.r[k];b1[k]=r[k]});
     if(confirm(`Поменять местами:\n«${r.place}» ⇄ «${f.r.place}»?`))await ops([mk(sh,id,a1),mk(sh,f.r.id,b1)])}
   }catch(e){alert(e.message)}}
 /* ---------- сканер ---------- */
-function parseQR(t){t=String(t).trim();if(t.startsWith('SI1|')){const a=t.slice(4).split('|');return{name:a[0]||'',type:a[1]||'',sn:a[2]||'',range:a[3]||''}}
-  try{const j=JSON.parse(t);if(j.s!==undefined)return{name:j.n||'',type:j.t||'',sn:String(j.s),range:j.r||''}}catch{}return null}
-function find(q){for(const[sh,rows]of Object.entries(S.sheets)){const r=rows.find(r=>norm(r.sn)===norm(q.sn)&&norm(r.type)===norm(q.type));if(r)return{sh,r}}
-  for(const[sh,rows]of Object.entries(S.sheets)){const r=rows.find(r=>norm(r.sn)===norm(q.sn)&&norm(r.name)===norm(q.name));if(r)return{sh,r}}return null}
+/* ---------- формат QR и поиск СИ ----------
+   Наш компактный код: S|<код вида СИ>|<тип>|<заводской номер>[|<id строки — только если тип+номер не уникальны>] (21×21 или 25×25 модулей).
+   Понимаем и старые SI1|… и JSON, а для ЛЮБЫХ других QR (произвольный текст) ищем в таблице заводской номер внутри текста. */
+const NAMES=['Манометр технический','Термометр биметаллический','Термоманометр технический','Термометр манометрический','Манометр электроконтактный','Электроконтактный манометр']; // порядок не менять: индекс записан в напечатанных QR
+function parseQR(t){t=String(t).trim();
+  if(t.startsWith('S|')){const a=t.split('|');return{name:NAMES[+a[1]]||'',type:a[2]||'',sn:a[3]||'',range:'',id:a[4]||''}}
+  if(t.startsWith('SI1|')){const a=t.slice(4).split('|');return{name:a[0]||'',type:a[1]||'',sn:a[2]||'',range:a[3]||''}}
+  try{const j=JSON.parse(t);if(j&&j.s!==undefined)return{name:j.n||'',type:j.t||'',sn:String(j.s),range:j.r||''}}catch{}
+  return{raw:t}}
+const allRows=()=>Object.entries(S.sheets).flatMap(([sh,rows])=>rows.map(r=>({sh,r})));
+const NOSN=/^(б\/н|бн|отсутствует|заглушка|нет|-|—)$/;
+function matchAll(q){if(!norm(q.sn))return[];const A=allRows();
+  if(q.id){const x=A.filter(a=>a.r.id===q.id);if(x.length)return x}
+  let x=A.filter(a=>norm(a.r.sn)===norm(q.sn)&&norm(a.r.type)===norm(q.type));
+  if(!x.length)x=A.filter(a=>norm(a.r.sn)===norm(q.sn)&&norm(a.r.name)===norm(q.name));
+  return x}
+const find=q=>matchAll(q)[0]||null;
+const hasTok=(t,s)=>{const e=s.replace(/[.*+?^${}()|[\]\\]/g,'\\$&');return new RegExp('(^|[^0-9a-zа-я])'+e+'([^0-9a-zа-я]|$)').test(t)};
+function findAny(q){const t=' '+q.raw.toLowerCase().replace(/ё/g,'е')+' ',out=[];
+  for(const a of allRows()){const sn=String(a.r.sn||'').toLowerCase().replace(/ё/g,'е').trim();if(sn.length<3||NOSN.test(sn)||!hasTok(t,sn))continue;
+    let sc=10;const ty=String(a.r.type||'').toLowerCase();if(ty&&t.includes(ty))sc+=5;if(a.r.name&&t.includes(a.r.name.toLowerCase()))sc+=2;out.push({...a,sc})}
+  return out.sort((x,y)=>y.sc-x.sc)}
+const cands=q=>q.raw!==undefined?findAny(q):matchAll(q).map(a=>({...a,sc:0}));
+const pick=q=>{const c=cands(q);return c.length===1||(c.length>1&&(c[0].sc||0)>(c[1].sc||0))?c[0]:null};
+function guessFromText(raw){const A=allRows(),low=raw.toLowerCase(),uq=k=>[...new Set(A.map(a=>String(a.r[k]||'').trim()).filter(Boolean))];
+  const name=uq('name').sort((a,b)=>b.length-a.length).find(n=>low.includes(n.toLowerCase()))||'';
+  const type=uq('type').filter(x=>x.length>=3).sort((a,b)=>b.length-a.length).find(n=>low.includes(n.toLowerCase()))||'';
+  const rm=raw.match(/-?\d+(?:[.,]\d+)?\s*(?:\.{2,3}|…|-)\s*[+-]?\d+(?:[.,]\d+)?\s*(?:кгс\/см2|кгс\/см²|бар|bar|мпа|mpa|кпа|kpa|°c|°с)/i);
+  const sn=raw.split(/[\s,;|()\[\]"']+/).find(x=>/^[0-9][0-9A-Za-zА-Яа-я\/\-]{3,}$/.test(x)&&!/^(19|20)\d\d$/.test(x)&&!(rm&&rm[0].includes(x))&&!(type&&type.includes(x)))||'';
+  return{name,type,sn,range:rm?rm[0].replace(/\s+/g,' '):'',raw}}
+const keyOf=r=>norm(r.type)+'|'+norm(r.sn);
+const dupKeys=()=>{const m=new Map();allRows().forEach(a=>{const k=keyOf(a.r);m.set(k,(m.get(k)||0)+1)});return new Set([...m].filter(([k,v])=>v>1).map(([k])=>k))};
+function qrText(r,withId){const i=NAMES.findIndex(n=>norm(n)===norm(r.name)),cl=s=>String(s||'').replace(/\|/g,'/').trim();return'S|'+(i<0?'-':i)+'|'+cl(r.type)+'|'+cl(r.sn)+(withId?'|'+r.id:'')}
+function qrMake(r,withId){const q=qrcode(0,'L');q.addData(qrText(r,withId));q.make();return q}
+const openDev=f=>{S.tab='j';S.cur=f.sh;S.flt='';S.tp='';S.ff={};const sn=String(f.r.sn||'');S.q=sn&&!NOSN.test(sn.toLowerCase())?sn:(f.r.place||f.r.type||'');S.open=f.sh+'|'+f.r.id;draw();scrollTo(0,0)};
+function chooseDlg(c){const m=modal(`<h3>Найдено несколько приборов</h3><p class="sub">Выберите нужный:</p><div class="mlist">${c.slice(0,12).map((x,i)=>`<button class="g" data-i="${i}">${esc(x.r.name)} · ${esc(x.r.type)} · №${esc(x.r.sn||'б/н')}<small>${esc(x.r.place||x.r.thread||'')}${x.r.object?' · '+esc(x.r.object):''} · ${esc(x.sh)}</small></button>`).join('')}</div><div class="row"><button class="g" id="cc">Отмена</button></div>`);
+  m.querySelectorAll('[data-i]').forEach(b=>b.onclick=()=>{m.remove();openDev(c[+b.dataset.i])});m.querySelector('#cc').onclick=()=>m.remove()}
 async function scanCode(cont){ // cont(q) вызывается на каждый код; без cont — вернёт первый
   await lib('https://cdn.jsdelivr.net/npm/jsqr@1.4.0/dist/jsQR.js','jsQR');
   const m=modal('<video playsinline muted autoplay></video><p id="msg" class="center">Наведите камеру на QR с 15–25 см, без бликов</p><div class="row"><button class="g" id="ph">📸 Снять фото QR</button><button class="g" id="cx">Закрыть</button></div><input type="file" accept="image/*" capture="environment" id="fi" hidden>'),v=m.querySelector('video'),msg=t=>{m.querySelector('#msg').textContent=t};
@@ -233,12 +268,15 @@ async function scanCode(cont){ // cont(q) вызывается на каждый
     m.querySelector('#fi').onchange=e=>{const f=e.target.files[0];if(!f)return;const im=new Image();im.onload=async()=>{const t=await decode(im);if(t)await handle(t);else msg('На фото QR не найден. Снимите ближе и ровнее.')};im.src=URL.createObjectURL(f)};
     (async function tick(){if(!alive)return;try{const t=await decode(v);if(t)await handle(t)}catch{}if(alive)setTimeout(tick,120)})();});
 }
-async function scanOne(){const q=await scanCode();if(!q)return;const f=find(q);if(f){S.tab='j';S.cur=f.sh;S.flt='';S.q=f.r.sn;S.open=f.sh+'|'+f.r.id;draw();scrollTo(0,0)}else addDlg(q)}
+async function scanOne(){const q=await scanCode();if(!q)return;const c=cands(q);
+  if(c.length===1||(c.length>1&&(c[0].sc||0)>(c[1].sc||0)))return openDev(c[0]);
+  if(c.length>1)return chooseDlg(c);
+  addDlg(q.raw!==undefined?guessFromText(q.raw):q)}
 /* ---------- добавление нового СИ: на выбранное место листа ---------- */
 function addDlg(q){
   let best=null,bs=-1;
   for(const[sh,rows]of Object.entries(S.sheets)){if(isRes(sh))continue;let s=0;rows.forEach(r=>{const p=(norm(r.name)===norm(q.name)?2:0)+(norm(r.type)===norm(q.type)?3:0)+(norm(r.range)===norm(q.range)?1:0);if(p>=2)s+=p});if(s>bs){bs=s;best=sh}}
-  const m=modal(`<h3>СИ не найдено в таблице</h3><p>${esc(q.name)} ${esc(q.type)} №${esc(q.sn)} ${esc(q.range)}</p><label>Лист</label><select id="as" style="width:100%">${Object.keys(S.sheets).map(k=>`<option ${k===best?'selected':''}>${esc(k)}</option>`).join('')}</select>
+  const m=modal(`<h3>СИ не найдено в таблице</h3><p>${esc(q.name)} ${esc(q.type)} №${esc(q.sn)} ${esc(q.range)}</p>${q.raw?`<p class="sub">Текст из QR: «${esc(q.raw.slice(0,200))}»${q.sn?'':' — номер не распознан, впишите его вручную'}</p>`:''}<label>Лист</label><select id="as" style="width:100%">${Object.keys(S.sheets).map(k=>`<option ${k===best?'selected':''}>${esc(k)}</option>`).join('')}</select>
   <label>Куда устанавливается (место на листе)</label><select id="ap" style="width:100%"></select>
   <label>Если на этом месте уже записан другой прибор</label><select id="ao" style="width:100%"><option value="keep">Оставить его, добавить новую строку рядом</option><option value="del">Удалить старый прибор из таблицы (его заменили)</option></select>
   <div class="fm" id="af"></div><div class="row"><button id="ay">Добавить</button><button class="g" id="an">Отмена</button></div>`);
@@ -256,7 +294,7 @@ function addDlg(q){
 async function batch(){
   const L=[];const m=document.createElement('div');
   alert('Сканируйте приборы по очереди. Для каждого можно указать новое место и данные поверки/калибровки. Затем «Применить».');
-  const q0=await scanCode(async q=>{const f=find(q);if(!f)return 'Не найден: '+q.sn;if(L.some(x=>x.f.r.id===f.r.id))return 'Уже в списке';L.push({f,place:'',date:f.r.date,kind:f.r.kind});return`Добавлено: ${f.r.type} №${f.r.sn} (всего ${L.length})`});
+  const q0=await scanCode(async q=>{const f=pick(q);if(!f)return 'Не найден или неоднозначно: '+(q.sn||(q.raw||'').slice(0,24));if(L.some(x=>x.f.r.id===f.r.id))return 'Уже в списке';L.push({f,place:'',date:f.r.date,kind:f.r.kind});return`Добавлено: ${f.r.type} №${f.r.sn} (всего ${L.length})`});
   if(!L.length)return;
   const mm=modal(`<h3>Установка: ${L.length} шт.</h3><div id="bl"></div><div class="row"><button id="ap">Применить</button><button class="g" id="ca">Отмена</button></div>`);
   mm.querySelector('#bl').innerHTML=L.map((x,i)=>{const r=x.f.r,pl=[...new Map(S.sheets[x.f.sh].filter(z=>z.name===r.name).map(z=>[z.place+'|'+z.object,z])).values()];
@@ -271,8 +309,10 @@ async function batch(){
       o.push(mk(x.f.sh,r.id,row))}
     mm.remove();try{await ops(o)}catch(e){alert(e.message)}}}
 /* ---------- печать QR ---------- */
-async function printQR(){await QRL();const all=items(),cells=all.map(({r})=>`<div class="c">${qrSvg(r,3)}<div class="t"><b>${esc(r.place||'Резерв')}</b><br>${esc(r.object||r.thread||'')}</div></div>`).join('');
-  const w=window.open('','_blank');w.document.write(`<!doctype html><meta charset=utf-8><title>QR СИ</title><style>@page{size:A4;margin:8mm}body{margin:0;font:9px Arial}.g{display:grid;grid-template-columns:repeat(5,1fr)}.c{border:.5px dashed #888;padding:2mm;text-align:center;break-inside:avoid;height:44mm;overflow:hidden}.c svg{width:30mm;height:30mm}.t{font-size:8px;line-height:1.1}.n{padding:4px;font-size:12px}@media print{.n{display:none}}</style><div class=n>${all.length} наклеек (${esc(S.cur==='*'?'все листы':S.cur)}). <button onclick=print()>Печать / Сохранить в PDF</button></div><div class=g>${cells}</div>`);w.document.close()}
+async function printQR(){await QRL();const all=items(),dk=dupKeys();let nmax=0;
+  const cells=all.map(({r})=>{const q=qrMake(r,dk.has(keyOf(r))),n=q.getModuleCount()+4;nmax=Math.max(nmax,n);
+    return `<div class="c">${q.createSvgTag({cellSize:1,margin:2,scalable:true}).replace('<svg','<svg style="--n:'+n+'"')}<div class="t"><b>${esc(r.place||'Резерв')}</b><br>${esc(r.object||r.thread||'')}</div></div>`}).join('');
+  const w=window.open('','_blank');w.document.write(`<!doctype html><meta charset=utf-8><title>QR СИ</title><style>@page{size:A4;margin:8mm}body{margin:0;font:8pt Arial;--m:.75;--nmax:${nmax}}.g{display:grid;grid-template-columns:repeat(auto-fill,calc(var(--nmax)*var(--m)*1mm + 3mm));justify-content:start}.c{border:.3mm dashed #888;padding:1.2mm;text-align:center;break-inside:avoid;overflow:hidden}.c svg{width:calc(var(--n)*var(--m)*1mm);height:calc(var(--n)*var(--m)*1mm)}.t{font-size:6.5pt;line-height:1.12;margin-top:.6mm}.n{padding:8px;font-size:14px;background:#e8eefc}@media print{.n{display:none}}</style><div class=n>${all.length} наклеек. Размер QR: <select id=ms><option value=".6">мелкий</option><option value=".75" selected>средний</option><option value=".9">крупный</option></select> <span id=sz></span> <button onclick=print()>Печать / PDF</button></div><div class=g>${cells}</div><script>const ms=document.getElementById('ms'),sz=document.getElementById('sz'),N=${nmax-4};function u(){document.body.style.setProperty('--m',ms.value);sz.textContent='(сторона кода ≈ '+(N*ms.value).toFixed(1)+' мм + поля)'}ms.onchange=u;u()<\/script>`);w.document.close()}
 /* ---------- вывод из резерва на рабочее место ---------- */
 function fromReserve(sh,id){
   const R=S.sheets[sh].find(x=>x.id===id),work=WORK();
